@@ -376,6 +376,9 @@ public class TasSelfTest : MonoBehaviour
             }
         }
 
+        // 7. Prediction lines
+        yield return PredictionTest();
+
         Log("");
         Log((failed ? "SOME CHECKS FAILED" : "ALL CHECKS PASSED") + "  (" + (Time.realtimeSinceStartup - t0).ToString("0") + " s)");
         try
@@ -396,6 +399,160 @@ public class TasSelfTest : MonoBehaviour
 #else
         Application.Quit(failed ? 1 : 0);
 #endif
+    }
+
+    // The green prediction line should follow the route the real game takes, and working the lines out
+    // must never change the real game.
+    private IEnumerator PredictionTest()
+    {
+        TasPredict pr = TasPredict.I;
+        if(pr == null)
+        {
+            Check(false, "Prediction lines are running");
+            yield break;
+        }
+        Log("Prediction speed: " + pr.Benchmark());
+        // A clean run of the whole movie to compare against
+        M.Verify();
+        yield return WaitIdle();
+        M.Seek(M.Movie.Length);
+        yield return WaitIdle();
+        M.DesyncFrame = -1;
+        int last = Mathf.Min(M.Movie.Length, M.Timeline.Count - 1);
+        if(M.DeathFrame > 0)
+        {
+            last = Mathf.Min(last, M.DeathFrame - 1);
+        }
+        TasFrameRecord[] real = new TasFrameRecord[last + 1];
+        for(int f = 0; f <= last; f++)
+        {
+            real[f] = M.Timeline[f];
+        }
+        const int ahead = 50;
+        bool bestSetting = TasPredict.FullPrime;
+        int bestScore = -1, bestStarts = 0, bestWithin = 0;
+        foreach(bool fullPrime in new[] { true, false })
+        {
+            TasPredict.FullPrime = fullPrime;
+            M.ReplayFromStart(5);
+            yield return WaitIdle();
+            int starts = 0, exact = 0, within1cm = 0, within10cm = 0, shown = 0, disturbed = 0, sumGood = 0;
+            float worst = 0f, ms = 0f;
+            for(int k = 5; k + ahead <= last; k += 23)
+            {
+                if(k > M.Frame)
+                {
+                    // Less than the rewind lead-in, so this just plays forward (no savestate loading)
+                    M.Seek(k);
+                    yield return WaitIdle();
+                }
+                if(M.Frame != k)
+                {
+                    continue;
+                }
+                ulong before = M.Registry.Capture(k).Fingerprint;
+                float t1 = Time.realtimeSinceStartup;
+                TasPrediction p = pr.PredictPath(ahead);
+                ms += (Time.realtimeSinceStartup - t1) * 1000f;
+                if(M.Registry.Capture(k).Fingerprint != before)
+                {
+                    disturbed++;
+                }
+                if(p == null)
+                {
+                    continue;
+                }
+                starts++;
+                float maxErr = 0f;
+                int good = 0, firstMiss = -1;
+                for(int j = 1; j < p.Pos.Count && k + j <= last; j++)
+                {
+                    float e = Vector2.Distance(p.Pos[j], real[k + j].Pos);
+                    maxErr = Mathf.Max(maxErr, e);
+                    if(e >= 0.001f && firstMiss < 0)
+                    {
+                        firstMiss = j;
+                    }
+                    if(e < 0.01f && good == j - 1)
+                    {
+                        good = j;
+                    }
+                }
+                if(maxErr < 0.001f) exact++;
+                if(maxErr < 0.01f) within1cm++;
+                if(maxErr < 0.1f) within10cm++;
+                worst = Mathf.Max(worst, maxErr);
+                sumGood += good;
+                if(firstMiss > 0 && shown < 5)
+                {
+                    shown++;
+                    int f = k + firstMiss;
+                    StringBuilder d = new StringBuilder();
+                    d.Append("  from frame " + k + ", first off at +" + firstMiss + " (frame " + f + "): predicted pos " + V(p.Pos[firstMiss]) + " vel " + V(p.Vel[firstMiss]) + " ground " + p.Ground[firstMiss]
+                        + " / real pos " + V(real[f].Pos) + " vel " + V(real[f].Vel) + " ground " + real[f].OnGround
+                        + "; inputs " + TasMovie.ButtonsToShortText(M.Movie.Get(f - 1)) + " > " + TasMovie.ButtonsToShortText(M.Movie.Get(f))
+                        + (p.Hits.Count > 0 ? ", predicted hits at +" + string.Join(",", p.Hits) : "") + (p.JumpAt > 0 ? ", jump at +" + p.JumpAt : ""));
+                    if(firstMiss > 1)
+                    {
+                        d.Append("\n    frame before: predicted vel " + V(p.Vel[firstMiss - 1]) + " ground " + p.Ground[firstMiss - 1] + " / real vel " + V(real[f - 1].Vel) + " ground " + real[f - 1].OnGround);
+                    }
+                    Log(d.ToString());
+                    if(firstMiss <= 2 && fullPrime)
+                    {
+                        // Show what the stand-in and the enemies did, next to what the real ones did
+                        Log("  real on frame " + k + ":\n" + pr.DescribeRealFoes());
+                        pr.Trace = true;
+                        pr.PredictPath(ahead);
+                        pr.Trace = false;
+                        Log("  predicted:\n" + pr.TraceLog);
+                        for(int t = 1; t <= 2; t++)
+                        {
+                            M.Seek(k + t);
+                            yield return WaitIdle();
+                            Log("  real on frame " + (k + t) + ":\n" + pr.DescribeRealFoes());
+                        }
+                    }
+                }
+            }
+            Log("Prediction lines (" + (fullPrime ? "normal warm-up step" : "tiny warm-up step") + "): " + exact + " of " + starts + " starts match the real route for " + ahead + " frames within 0.001, "
+                + within1cm + " within 0.01, " + within10cm + " within 0.1, worst " + worst.ToString("0.000")
+                + ", on average " + (sumGood / (float)Mathf.Max(1, starts)).ToString("0.0") + " frames before drifting 0.01, " + (ms / Mathf.Max(1, starts)).ToString("0.00") + " ms per line");
+            Check(disturbed == 0, "Working out the prediction lines leaves the game untouched (" + disturbed + " changed)");
+            int score = exact * 1000 + within1cm;
+            if(score > bestScore)
+            {
+                bestScore = score;
+                bestSetting = fullPrime;
+                bestStarts = starts;
+                bestWithin = within1cm;
+            }
+        }
+        TasPredict.FullPrime = bestSetting;
+        Log("Prediction lines use: " + (bestSetting ? "normal warm-up step" : "tiny warm-up step"));
+        Check(M.DesyncFrame < 0, "The run still replays exactly while prediction lines are being worked out (desync " + M.DesyncFrame + ")");
+        Check(bestStarts > 0 && bestWithin >= bestStarts * 0.8f, "The green prediction line stays within 0.01 of the real route for " + ahead + " frames (" + bestWithin + " of " + bestStarts + " starts)");
+
+        // All the lines at once, from somewhere in the middle of the run
+        M.Seek(Mathf.Min(last, 300));
+        yield return WaitIdle();
+        pr.ComputeNow();
+        Log("All prediction lines from frame " + M.Frame + ": " + pr.Lines.Count + " lines (" + LineNames(pr) + ") in " + pr.LastMs.ToString("0.0") + " ms" + (pr.Problem.Length > 0 ? ", problem: " + pr.Problem : ""));
+        Check(pr.Problem.Length == 0 && pr.Lines.Count > 0, "All the prediction lines can be worked out");
+    }
+
+    private static string V(Vector2 v)
+    {
+        return "(" + v.x.ToString("0.0000") + ", " + v.y.ToString("0.0000") + ")";
+    }
+
+    private static string LineNames(TasPredict pr)
+    {
+        List<string> names = new List<string>();
+        foreach(TasPrediction p in pr.Lines)
+        {
+            names.Add(p.Name);
+        }
+        return string.Join(", ", names);
     }
 
     // When did the game's speedrun timer start, and what did it say at a frame? (for testing)
@@ -426,7 +583,7 @@ public class TasSelfTest : MonoBehaviour
     }
 
     // A made-up but busy movie: running both ways, jumps of different heights, attacks in all directions.
-    private static TasMovie MakeMovie(int frames, int seed)
+    public static TasMovie MakeMovie(int frames, int seed)
     {
         System.Random rng = new System.Random(seed);
         TasMovie m = new TasMovie();

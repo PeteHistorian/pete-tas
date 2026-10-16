@@ -148,7 +148,8 @@ public class TasDraw : MonoBehaviour
         }
         bool routes = ShouldDraw(m);
         bool hitboxes = ShouldDrawHitboxes(m);
-        if(!routes && !hitboxes)
+        bool predictions = ModeAllowsDrawing(m) && TasPredict.I != null && TasPredict.Active(m) && TasPredict.I.Lines.Count > 0;
+        if(!routes && !hitboxes && !predictions)
         {
             return;
         }
@@ -170,6 +171,10 @@ public class TasDraw : MonoBehaviour
         if(routes)
         {
             DrawRoutes(m, z);
+        }
+        if(predictions)
+        {
+            DrawPredictions(TasPredict.I, z);
         }
         GL.End();
         GL.PopMatrix();
@@ -247,6 +252,76 @@ public class TasDraw : MonoBehaviour
             Seg(p + new Vector2(0, -s), p + new Vector2(0, -s * 0.4f), 2f, c, z);
             Seg(p + new Vector2(0, s * 0.4f), p + new Vector2(0, s), 2f, c, z);
         }
+    }
+
+    // ---------------------------------------------------------------
+    //  Prediction lines (see TasPredict)
+    // ---------------------------------------------------------------
+    private void DrawPredictions(TasPredict pr, float z)
+    {
+        // Back to front, so the green "your path" line ends up on top
+        for(int li = pr.Lines.Count - 1; li >= 0; li--)
+        {
+            TasPrediction p = pr.Lines[li];
+            int n = p.Pos.Count;
+            for(int i = 1; i < n; i++)
+            {
+                Color c = p.Color;
+                c.a = Mathf.Lerp(0.95f, 0.35f, (float)i / Mathf.Max(1, n - 1));
+                Seg(p.Pos[i - 1], p.Pos[i], p.Width, c, z);
+            }
+            Color dot = p.Color;
+            dot.a = 0.8f;
+            for(int i = 10; i < n; i += 10)
+            {
+                Dot(p.Pos[i], i % 50 == 0 ? 7f : 5f, dot, z);
+            }
+            // Where Pete takes off and where he lands (a little bar under his feet)
+            if(p.JumpAt > 0 && p.JumpAt < n)
+            {
+                Circle(p.Pos[p.JumpAt], 5f * upp, 2f, p.Color, z);
+            }
+            foreach(int i in p.Landings)
+            {
+                if(i < n)
+                {
+                    Vector2 feet = p.Pos[i] + new Vector2(0f, pr.FootY);
+                    float w = Mathf.Max(0.2f, pr.BoxSize.x * 0.6f);
+                    Seg(feet + new Vector2(-w, 0f), feet + new Vector2(w, 0f), 3f, p.Color, z);
+                }
+            }
+            foreach(int i in p.Hits)
+            {
+                if(i < n)
+                {
+                    Cross(p.Pos[i], 7f, TasPredict.HitColor, z);
+                }
+            }
+            if(p.DeathAt >= 0 && p.DeathAt < n)
+            {
+                Cross(p.Pos[p.DeathAt], 13f, Color.red, z);
+            }
+        }
+        // Pete's outline where the green line first lands
+        TasPrediction path = pr.Path;
+        if(path != null && pr.Lines.Contains(path) && path.Landings.Count > 0 && path.Landings[0] < path.Pos.Count && pr.BoxSize.x > 0f)
+        {
+            Vector2 c = path.Pos[path.Landings[0]] + pr.BoxCenter;
+            Vector2 h = pr.BoxSize * 0.5f;
+            Color col = TasPredict.PathColor;
+            col.a = 0.7f;
+            Seg(c + new Vector2(-h.x, -h.y), c + new Vector2(h.x, -h.y), 1.5f, col, z);
+            Seg(c + new Vector2(h.x, -h.y), c + new Vector2(h.x, h.y), 1.5f, col, z);
+            Seg(c + new Vector2(h.x, h.y), c + new Vector2(-h.x, h.y), 1.5f, col, z);
+            Seg(c + new Vector2(-h.x, h.y), c + new Vector2(-h.x, -h.y), 1.5f, col, z);
+        }
+    }
+
+    private void Cross(Vector2 p, float px, Color c, float z)
+    {
+        float s = px * upp;
+        Seg(p + new Vector2(-s, -s), p + new Vector2(s, s), 3f, c, z);
+        Seg(p + new Vector2(-s, s), p + new Vector2(s, -s), 3f, c, z);
     }
 
     // ---------------------------------------------------------------
@@ -329,6 +404,12 @@ public class TasDraw : MonoBehaviour
         {
             if(c == null || !c.enabled || !c.gameObject.activeInHierarchy)
             {
+                continue;
+            }
+            string sceneName = c.gameObject.scene.name;
+            if(sceneName != null && sceneName.StartsWith("[TAS]"))
+            {
+                // The prediction lines' hidden copy of the level
                 continue;
             }
             Color color;

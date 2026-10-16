@@ -99,6 +99,17 @@ public class TasVisualTest : MonoBehaviour
         yield return Shot("hitboxes-panel");
         TasDraw.ShowLevelCollision = false;
         TasDraw.ShowHitboxes = false;
+
+        // Prediction lines: on the ground just before the first jump, and in the air
+        TasPredict.Show = true;
+        TasHud.I.ShowTab("Ghosts");
+        M.Seek(24);
+        yield return WaitIdle();
+        yield return Shot("prediction-ground");
+        M.Seek(33);
+        yield return WaitIdle();
+        yield return Shot("prediction-air");
+        string predictInfo = TasPredict.I != null ? TasPredict.I.Lines.Count + " lines, " + TasPredict.I.LastMs.ToString("0.0") + " ms, error " + TasPredict.I.PathError.ToString("0.0000") + (TasPredict.I.Problem.Length > 0 ? ", problem " + TasPredict.I.Problem : "") : "none";
         M.Seek(120);
         yield return WaitIdle();
 
@@ -143,7 +154,39 @@ public class TasVisualTest : MonoBehaviour
         while((M.CurrentMode == TasManager.Mode.Video || TasVideoExport.I.Exporting || TasVideoExport.I.Finishing) && Time.realtimeSinceStartup - started < 180f) yield return null;
         string exportInfo = "export frames " + TasVideoExport.I.FramesWritten + ", file " + TasVideoExport.I.LastFile + ", result " + TasVideoExport.I.LastResult;
 
-        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors + " | " + exportInfo);
+        // Prediction lines near enemies: play the self-test's long run and stop where an enemy is close
+        string enemyInfo = "";
+        M.ReplaceMovie(TasSelfTest.MakeMovie(1500, 7), "visual-test-enemies", 200);
+        yield return WaitIdle();
+        TasPredict.Show = true;
+        TasHud.I.ShowTab("Ghosts");
+        if(TasFreeCam.I != null && !TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
+        bool shotHit = false, shotPogo = false;
+        for(int f = 200; f < 1160 && !(shotHit && shotPogo); f += 6)
+        {
+            M.Seek(f);
+            yield return WaitIdle();
+            if(M.Frame != f || TasPredict.I == null) break;
+            TasPredict.I.ComputeNow();
+            bool hasHit = false, hasPogo = false;
+            foreach(TasPrediction line2 in TasPredict.I.Lines)
+            {
+                if(line2.Color == TasPredict.HitColor) hasHit = true;
+                if(line2.Color == TasPredict.PogoColor) hasPogo = true;
+            }
+            if((hasHit && !shotHit) || (hasPogo && !shotPogo))
+            {
+                string kind = hasPogo && !shotPogo ? "pogo" : "enemy";
+                yield return Shot("prediction-" + kind);
+                enemyInfo += " " + kind + " at frame " + f + " (" + TasPredict.I.Lines.Count + " lines, " + TasPredict.I.LastMs.ToString("0.0") + " ms);";
+                if(hasHit) shotHit = true;
+                if(hasPogo) shotPogo = true;
+            }
+        }
+        if(TasFreeCam.I != null && TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
+        predictInfo += " |" + (enemyInfo.Length > 0 ? enemyInfo : " no enemy lines found");
+
+        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors + " | " + exportInfo + " | predictions " + predictInfo);
         Application.Quit(0);
     }
 }

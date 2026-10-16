@@ -37,6 +37,7 @@ The level starts frozen on **frame 0**. One frame is 1/50th of a second, the sam
 | **V** | Verify (replay from the start to check everything is exact) |
 | **M** | free camera: zoom out, look around, click the route to jump to that frame |
 | **X** | show / hide hitboxes |
+| **T** | show / hide prediction lines |
 | **C** | center the camera on Pete |
 | **Shift + click** frame numbers | select a range of frames |
 | **Ctrl + C / Ctrl + V** | copy / paste frames |
@@ -87,6 +88,35 @@ Press **X**, or tick **Hitboxes** in the View tab, to see the collision boxes:
 - **gold:** the finish zone
 
 Tick **Level collision too** to also see every floor and wall tile (white) and the room triggers (faint purple). Hitboxes can also be shown in video playback (Video tab).
+
+## Prediction lines (like Geometry Dash's "show trajectory")
+
+Press **T**, or tick **Prediction lines** in the View tab. Lines show where Pete is heading from the frame you're on. They update every frame, even while the run is playing or you're recording.
+
+- **Green: your path.** Where your inputs take Pete.
+  - While recording, it follows the keys you're holding right now, so you can see where you'll land before you get there.
+  - Past the end of the movie, it keeps holding the last frame's buttons.
+- **Blue: hold jump** from the next frame on. **Yellow: let go of jump.** These only show up when they'd go somewhere different from the green line, for example a jump you can still make (coyote time) or a shorter hop.
+- **Red: if an enemy hits you.** One line for each enemy or spike near Pete that can hurt him right now, showing where the knockback would throw him.
+- **Orange: pogo bounce.** When Pete is in the air near an enemy, this shows where he goes if your down-attack hits it right now.
+- **Markers:**
+  - dots every 10 frames
+  - a small circle where a jump starts
+  - a bar under Pete's feet where he lands
+  - a green outline of Pete where the green line first lands
+  - a red X where an enemy would hit him along the way, and a big red X if he'd die
+- **- / +** next to the tick box sets how far ahead the lines go (0.5 to 5 seconds).
+- The Video tab has **Show prediction lines** too, if you want them in a video.
+
+How it works: a stand-in Pete runs ahead in a hidden copy of the level. It uses the game's own physics and Pete's own movement rules (speed, jump height, jump hold, coyote time, knockback), so the lines never change your run.
+
+When the real route ahead is already known (frames you've played before), the View tab tells you how close the green line is to it.
+
+In the self-test's long run, the green line matched the real route to within 0.01 for a whole second ahead at 61 of 63 test points. The two misses were caused by a sword hit along the way.
+
+Limits:
+- The lines don't know about sword hits along the way. The orange line shows the bounce on its own.
+- Enemies are moved in a simple way: walking enemies keep walking (and turn at walls), and flying enemies chase Pete once they've noticed him.
 
 ## Finding the fastest line
 

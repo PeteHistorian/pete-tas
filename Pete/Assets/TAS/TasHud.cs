@@ -150,6 +150,7 @@ public class TasHud : MonoBehaviour
         if(Input.GetKeyDown(KeyCode.L)) { tab = Tab.Lines; Hidden = false; }
         if(Input.GetKeyDown(KeyCode.M) && TasFreeCam.I != null) TasFreeCam.I.Toggle();
         if(Input.GetKeyDown(KeyCode.X)) ToggleHitboxes();
+        if(Input.GetKeyDown(KeyCode.T)) TogglePredictions();
         if(Input.GetKeyDown(KeyCode.C) && !ctrlHeld && TasFreeCam.I != null) TasFreeCam.I.ToggleCenter();
         if(M.Busy)
         {
@@ -319,6 +320,74 @@ public class TasHud : MonoBehaviour
                 ? "Hitboxes ON: green = Pete, orange = sword swing, red = enemies & spikes, blue = pickups & orbs, gold = finish."
                 : "Hitboxes OFF.");
         }
+    }
+
+    private void TogglePredictions()
+    {
+        TasPredict.Show = !TasPredict.Show;
+        if(M != null)
+        {
+            M.Say(TasPredict.Show
+                ? "Prediction lines ON: green = where your inputs take Pete, blue = hold jump, yellow = let go of jump, red = if an enemy hits you, orange = pogo bounce."
+                : "Prediction lines OFF.");
+        }
+    }
+
+    private void PredictionControls()
+    {
+        GUILayout.BeginHorizontal();
+        bool show = GUILayout.Toggle(TasPredict.Show, " Prediction lines (T)", toggle);
+        if(show != TasPredict.Show) TogglePredictions();
+        GUILayout.FlexibleSpace();
+        if(GUILayout.Button("-", button, GUILayout.Width(24))) TasPredict.Frames = Mathf.Max(25, TasPredict.Frames - 25);
+        GUILayout.Label((TasPredict.Frames * TasManager.Tick).ToString("0.0") + " s", label, GUILayout.Width(40));
+        if(GUILayout.Button("+", button, GUILayout.Width(24))) TasPredict.Frames = Mathf.Min(250, TasPredict.Frames + 25);
+        GUILayout.EndHorizontal();
+        if(!TasPredict.Show)
+        {
+            return;
+        }
+        GUILayout.BeginHorizontal();
+        TasPredict.ShowPath = ColorToggle(TasPredict.ShowPath, TasPredict.PathColor, "Your path");
+        TasPredict.ShowJumpChoices = ColorToggle(TasPredict.ShowJumpChoices, TasPredict.HoldColor, "Hold", TasPredict.ReleaseColor, "/ let go of jump");
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
+        TasPredict.ShowHits = ColorToggle(TasPredict.ShowHits, TasPredict.HitColor, "If an enemy hits you");
+        TasPredict.ShowPogo = ColorToggle(TasPredict.ShowPogo, TasPredict.PogoColor, "Pogo bounce");
+        GUILayout.EndHorizontal();
+        TasPredict pr = TasPredict.I;
+        if(pr != null)
+        {
+            string acc;
+            if(pr.Problem.Length > 0)
+            {
+                acc = "<color=#ff6060>Couldn't work out the lines: " + pr.Problem + "</color>";
+            }
+            else if(pr.PathError >= 0f)
+            {
+                bool good = pr.PathError < 0.01f;
+                acc = "Green line vs the real route (" + pr.PathErrorFrames + " frames ahead): " + (good ? "<color=#60ff70>" : "<color=#ffd040>") + "off by " + pr.PathError.ToString("0.000") + "</color>";
+            }
+            else
+            {
+                acc = "Lines show where Pete goes from this frame. Dots every 10 frames, bars where he lands.";
+            }
+            GUILayout.Label(acc + "  <color=#888888>(" + pr.LastMs.ToString("0.0") + " ms)</color>", small);
+        }
+    }
+
+    private bool ColorToggle(bool on, Color c, string text, Color c2 = default(Color), string text2 = null)
+    {
+        Color old = GUI.color;
+        GUI.color = c;
+        GUILayout.Label("■", label, GUILayout.Width(12));
+        if(text2 != null)
+        {
+            GUI.color = c2;
+            GUILayout.Label("■", label, GUILayout.Width(12));
+        }
+        GUI.color = old;
+        return GUILayout.Toggle(on, " " + text + (text2 != null ? " " + text2 : ""), toggle);
     }
 
     private void HitboxLegend()
@@ -1117,6 +1186,8 @@ public class TasHud : MonoBehaviour
     private void GhostsTab()
     {
         TasManager m = M;
+        PredictionControls();
+        GUILayout.Space(4);
         GUILayout.Label("Each time you change an earlier input, the old route is kept here as a faded ghost line.", small);
         GUILayout.BeginHorizontal();
         TasDraw.ShowGhostPetes = GUILayout.Toggle(TasDraw.ShowGhostPetes, " Ghost Petes", toggle);
@@ -1360,6 +1431,7 @@ public class TasHud : MonoBehaviour
         m.VideoShowTimer = GUILayout.Toggle(m.VideoShowTimer, " Show frame counter", toggle);
         m.VideoShowRoute = GUILayout.Toggle(m.VideoShowRoute, " Show route line", toggle);
         m.VideoShowHitboxes = GUILayout.Toggle(m.VideoShowHitboxes, " Show hitboxes", toggle);
+        TasPredict.ShowInVideo = GUILayout.Toggle(TasPredict.ShowInVideo, " Show prediction lines", toggle);
         m.VideoEndScreen = GUILayout.Toggle(m.VideoEndScreen, " Go to the end screen when finished", toggle);
         GUILayout.Space(6);
         if(GUILayout.Button("Play video from the start", button, GUILayout.Height(28)))
@@ -1430,6 +1502,7 @@ public class TasHud : MonoBehaviour
         HelpRow("V", "verify (exact replay from the start)");
         HelpRow("M", "free camera (zoom out to see the route)");
         HelpRow("X", "show / hide hitboxes");
+        HelpRow("T", "show / hide prediction lines");
         HelpRow("C", "center the camera on Pete");
         HelpRow("Shift + click", "select frames (click frame numbers)");
         HelpRow("Ctrl + C / V", "copy / paste frames");

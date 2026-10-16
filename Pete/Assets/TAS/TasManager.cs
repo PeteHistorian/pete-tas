@@ -168,6 +168,7 @@ public class TasManager : MonoBehaviour
         root.AddComponent<TasDraw>();
         root.AddComponent<TasFreeCam>();
         root.AddComponent<TasVideoExport>();
+        root.AddComponent<TasPredict>();
         SelfTestMode = HasArg("-tasSelfTest");
 #if UNITY_EDITOR
         SelfTestMode |= UnityEditor.SessionState.GetBool("PeteTAS.SelfTest", false);
@@ -225,6 +226,11 @@ public class TasManager : MonoBehaviour
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        if(scene.name.StartsWith("[TAS]"))
+        {
+            // The prediction lines' hidden copy of the level, not a real level
+            return;
+        }
         sceneLoadedFlag = true;
         if(CurrentMode == Mode.Video && scene.name != WorldSceneName)
         {
