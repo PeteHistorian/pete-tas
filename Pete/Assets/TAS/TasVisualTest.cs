@@ -95,6 +95,19 @@ public class TasVisualTest : MonoBehaviour
         TasFreeCam.I.ToggleCenter();
         TasHud.I.ClearSelection();
 
+        // Filling a whole selection: Jump on for frames 100-140 in one go, then undo it
+        TasHud.I.Select(100, 140);
+        TasHud.I.FillSelectionColumn(4);
+        yield return WaitIdle();
+        int filled = 0;
+        for(int f = 100; f <= 140; f++) if((M.Movie.Get(f) & Buttons.Jump) != 0) filled++;
+        M.Undo();
+        yield return WaitIdle();
+        int afterUndo = 0;
+        for(int f = 100; f <= 140; f++) if((M.Movie.Get(f) & Buttons.Jump) != 0) afterUndo++;
+        string fillInfo = filled + " of 41 frames got J, " + afterUndo + " left after undo";
+        TasHud.I.ClearSelection();
+
         // Hitboxes, with and without the level's own collision, while Pete is swinging his sword
         M.Seek(67);
         yield return WaitIdle();
@@ -227,7 +240,24 @@ public class TasVisualTest : MonoBehaviour
         if(TasFreeCam.I != null && TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
         predictInfo += " |" + (enemyInfo.Length > 0 ? enemyInfo : " no enemy lines found");
 
-        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors + " | " + exportInfo + " | predictions " + predictInfo + " | step back: " + freezeInfo + " | to end: " + toEndInfo);
+        // The user's own run, if a copy is here (prediction lines with names, where they asked about them)
+        if(File.Exists(Path.Combine(TasManager.TasFolder, "user-run3.txt")))
+        {
+            M.LoadMovie("user-run3");
+            yield return WaitIdle();
+            TasPredict.Frames = 100;
+            TasPredict.ShowKnockback = true;
+            if(TasFreeCam.I != null && !TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
+            foreach(int uf in new[] { 141, 164 })
+            {
+                M.Seek(uf);
+                yield return WaitIdle();
+                yield return Shot("user-run-" + uf);
+            }
+            if(TasFreeCam.I != null && TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
+        }
+
+        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors + " | " + exportInfo + " | predictions " + predictInfo + " | step back: " + freezeInfo + " | to end: " + toEndInfo + " | fill: " + fillInfo);
         Application.Quit(0);
     }
 }

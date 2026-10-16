@@ -19,6 +19,10 @@ public class TasPrediction
     public readonly List<int> Hits = new List<int>();
     public int JumpAt = -1;
     public int DeathAt = -1;
+    // Goes exactly where the green line goes (drawn thin, on top of it, so both still show)
+    public bool SameAsPath;
+    // Short name shown at the end of the line ("longest jump: hold 26 f")
+    public string Tag;
     // Frames where Pete is in knockback (pushed by a hit and/or can't move)
     public readonly List<bool> Knock = new List<bool>();
     // Text shown next to the line ("HIT", "knockback over (10 f)", "lands", "stops here")
@@ -69,6 +73,8 @@ public class TasPredict : MonoBehaviour
     public static bool ShowAttacks = true;
     // Knockback highlighted on the lines, with labels saying how long it lasts and where Pete lands or stops
     public static bool ShowKnockback = true;
+    // A name at the end of each line, so you can tell which is which
+    public static bool ShowNames = true;
     public static bool ShowInVideo;
     public static int Frames = 75;
     public const float HitRange = 6f;
@@ -409,7 +415,7 @@ public class TasPredict : MonoBehaviour
         bool live = Live(m);
         Vector2 p = m.Player.Position, v = m.Player.Velocity;
         return f + "|" + m.Restores + "|" + m.Timeline.Count + "|" + m.Movie.Length + "|" + h + "|" + p.x.ToString("R") + "," + p.y.ToString("R") + "|" + v.x.ToString("R") + "," + v.y.ToString("R")
-            + "|" + (live ? (int)TasManager.ReadPlayerInput() : -1) + "|" + Frames + ShowPath + PathToEnd + ShowLongJump + ShowShortJump + ShowLetGo + ShowHits + ShowAttacks + ShowKnockback + ExitsFirst + FullPrime;
+            + "|" + (live ? (int)TasManager.ReadPlayerInput() : -1) + "|" + Frames + ShowPath + PathToEnd + ShowLongJump + ShowShortJump + ShowLetGo + ShowHits + ShowAttacks + ShowKnockback + ShowNames + ExitsFirst + FullPrime;
     }
 
     // While recording, the line follows the keys you're holding right now
@@ -451,6 +457,7 @@ public class TasPredict : MonoBehaviour
 
             TasPrediction green = Run(path, pathN, null, null, live ? "Your path (keys you're holding)" : "Your path", PathColor, inputsEnd, true);
             green.Width = 3.5f;
+            green.Tag = live ? "your path (keys held)" : "your path";
             Path = green;
             if(ShowPath)
             {
@@ -466,18 +473,39 @@ public class TasPredict : MonoBehaviour
             if(ShowLongJump)
             {
                 // Jump held from the next frame on: the highest, longest jump
-                AddUnlessSame(Run(Constant(path[0], dirs | Buttons.Jump, n), n, null, null, "Longest jump (hold jump)", HoldColor), green);
+                TasPrediction longJump = Run(Constant(path[0], dirs | Buttons.Jump, n), n, null, null, "Longest jump (hold jump)", HoldColor);
+                int hold = HoldFrames(longJump);
+                int hitFirst = -1;
+                foreach(int h in longJump.Hits)
+                {
+                    if(h >= longJump.JumpAt && (hold <= 0 || h <= hold) && (hitFirst < 0 || h < hitFirst))
+                    {
+                        hitFirst = h;
+                    }
+                }
+                longJump.Tag = longJump.JumpAt < 0 ? "hold jump: can't jump now"
+                    : hitFirst >= 0 ? "longest jump: hit at +" + hitFirst + " f"
+                    : hold > 0 ? "longest jump: hold " + hold + " f" : "longest jump";
+                AddAlways(longJump, green);
             }
             if(ShowShortJump && n >= 2)
             {
-                // Jump pressed for a single frame: the lowest hop (if jump is held now, it's let go first)
+                // Jump pressed for a single frame: the lowest hop. If jump is already held, the shortest you can
+                // still get is letting go right now (pressing again would only start a second, buffered jump).
                 Buttons[] tap = Constant(path[0], dirs, n);
-                tap[holdingJump ? 2 : 1] |= Buttons.Jump;
-                AddUnlessSame(Run(tap, n, null, null, "Shortest jump (tap jump)", TapColor), green);
+                if(!holdingJump)
+                {
+                    tap[1] |= Buttons.Jump;
+                }
+                TasPrediction shortJump = Run(tap, n, null, null, "Shortest jump (tap jump)", TapColor);
+                shortJump.Tag = holdingJump ? "shortest jump: let go now" : shortJump.JumpAt < 0 ? "tap jump: can't jump now" : "shortest jump: tap 1 f";
+                AddAlways(shortJump, green);
             }
             if(ShowLetGo)
             {
-                AddUnlessSame(Run(Constant(path[0], dirs, n), n, null, null, "Let go of jump", ReleaseColor), green);
+                TasPrediction letGo = Run(Constant(path[0], dirs, n), n, null, null, "Let go of jump", ReleaseColor);
+                letGo.Tag = "let go of jump";
+                AddAlways(letGo, green);
             }
             // Attack lines only when something the sword could hit is close enough to matter
             bool inReach = false;
@@ -491,11 +519,17 @@ public class TasPredict : MonoBehaviour
             if(ShowAttacks && start.CanAttack && inReach)
             {
                 // Attacking on the next frame (only shown when the swing hits something and changes the route)
-                AddUnlessSame(Run(AttackNow(path, n, Buttons.None), n, null, null, "Attack now", AttackColor), green);
-                AddUnlessSame(Run(AttackNow(path, n, Buttons.Up), n, null, null, "Attack up now", AttackUpColor), green);
+                TasPrediction atk = Run(AttackNow(path, n, Buttons.None), n, null, null, "Attack now", AttackColor);
+                atk.Tag = "attack now";
+                AddUnlessSame(atk, green);
+                atk = Run(AttackNow(path, n, Buttons.Up), n, null, null, "Attack up now", AttackUpColor);
+                atk.Tag = "attack up now";
+                AddUnlessSame(atk, green);
                 if(!start.OnGround)
                 {
-                    AddUnlessSame(Run(AttackNow(path, n, Buttons.Down), n, null, null, "Attack down now (pogo)", AttackDownColor), green);
+                    atk = Run(AttackNow(path, n, Buttons.Down), n, null, null, "Attack down now (pogo)", AttackDownColor);
+                    atk.Tag = "attack down now";
+                    AddUnlessSame(atk, green);
                 }
             }
             if(ShowHits)
@@ -515,6 +549,7 @@ public class TasPredict : MonoBehaviour
                 {
                     TasPrediction hit = Run(path, n, near[i], null, near[i].Name == "spikes" ? "If you touch the spikes" : "If the " + near[i].Name + " hits you", HitColor);
                     hit.Width = 2f;
+                    hit.Tag = near[i].Name == "spikes" ? "if you touch the spikes" : "if the " + near[i].Name + " hits you";
                     Lines.Add(hit);
                 }
             }
@@ -600,6 +635,36 @@ public class TasPredict : MonoBehaviour
         }
         ReadStart(m);
         return Run(PathInputs(m, n, false), n, null, null, "Your path", PathColor);
+    }
+
+    // How many frames of holding jump make a difference: from the press until Pete stops rising
+    // (after that, holding or not changes nothing). 0 if there was no jump.
+    private static int HoldFrames(TasPrediction p)
+    {
+        if(p.JumpAt < 1)
+        {
+            return 0;
+        }
+        for(int j = p.JumpAt; j < p.Vel.Count; j++)
+        {
+            if(p.Vel[j].y <= 0f)
+            {
+                return j;
+            }
+        }
+        return 0;
+    }
+
+    // A line the user asked for: always shown. If it goes exactly where the green line goes, it's drawn thin
+    // on top of the green one, so you can still see it's there (and that it's the same).
+    private void AddAlways(TasPrediction p, TasPrediction green)
+    {
+        if(ShowPath && p.SameAs(green, 0.0005f))
+        {
+            p.SameAsPath = true;
+            p.Width = 1.5f;
+        }
+        Lines.Add(p);
     }
 
     private void AddUnlessSame(TasPrediction p, TasPrediction green)
@@ -1611,7 +1676,7 @@ public class TasPredict : MonoBehaviour
         kbFrom = j;
         if(j > 0)
         {
-            p.AddLabel(j, "HIT -" + f.Damage + " HP");
+            p.AddLabel(j, (f.Name == "spikes" ? "spikes" : f.Name) + " hits you -" + f.Damage + " HP");
         }
         if(Trace)
         {

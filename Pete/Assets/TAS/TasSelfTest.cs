@@ -67,6 +67,12 @@ public class TasSelfTest : MonoBehaviour
             TasStateRegistry.PrimeSteps = int.Parse(primeStepsArg);
         }
         Log("Rewind warm-up: " + TasStateRegistry.PrimeSteps + " step(s) of " + TasStateRegistry.PrimeStep);
+        string probeMovie = ArgAfter("-tasProbePredict");
+        if(probeMovie != null)
+        {
+            yield return ProbePredict(probeMovie, int.Parse(ArgAfter("-frame") ?? "1"));
+            yield break;
+        }
         string checkMovie = ArgAfter("-tasCheckMovie");
         if(checkMovie != null)
         {
@@ -525,6 +531,41 @@ public class TasSelfTest : MonoBehaviour
         }
         Log("side weapon local " + side.transform.localPosition.ToString("F4") + " down " + down.transform.localPosition.ToString("F4") + " up " + up.transform.localPosition.ToString("F4") + ", pete scale " + pete.transform.localScale.ToString("F3"));
         Finish("attack-probe.txt");
+    }
+
+    // Prints every prediction line from one frame of a movie, step by step (to look into odd-looking lines)
+    private IEnumerator ProbePredict(string name, int frame)
+    {
+        M.LoadMovie(name);
+        yield return WaitIdle();
+        M.Seek(frame);
+        yield return WaitIdle();
+        TasPredict pr = TasPredict.I;
+        TasPredict.ShowPath = TasPredict.ShowLongJump = TasPredict.ShowShortJump = TasPredict.ShowLetGo = TasPredict.ShowHits = TasPredict.ShowAttacks = TasPredict.ShowKnockback = true;
+        TasPredict.Frames = 60;
+        pr.ComputeNow();
+        Log("Frame " + M.Frame + ": " + DescribeNow() + " canMove " + M.Player.CanMove + " kb " + M.Player.KnockbackLeft.ToString("R") + " input " + TasMovie.ButtonsToShortText(M.Movie.Get(M.Frame)) + " next " + TasMovie.ButtonsToShortText(M.Movie.Get(M.Frame + 1)));
+        Log(pr.DescribeRealFoes());
+        foreach(TasPrediction p in pr.Lines)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append(p.Name + " [" + p.Tag + "]: " + p.Pos.Count + " points, jump at " + p.JumpAt + ", hits " + string.Join(",", p.Hits) + ", death " + p.DeathAt + ", same as path " + p.SameAsPath + ", labels");
+            foreach(KeyValuePair<int, string> l in p.Labels) sb.Append(" [" + l.Value + " @" + l.Key + "]");
+            Log(sb.ToString());
+            for(int j = 0; j < p.Pos.Count && j <= 24; j++)
+            {
+                Log("   +" + j + " pos " + V(p.Pos[j]) + " vel " + V(p.Vel[j]) + " ground " + p.Ground[j] + (j < p.Knock.Count && p.Knock[j] ? " KNOCK" : ""));
+            }
+        }
+        // What the real game does with the movie's own inputs, for comparison with the green line
+        Log("Real game with the movie's inputs:");
+        for(int j = 1; j <= 24 && M.Frame < M.Movie.Length; j++)
+        {
+            M.StepForward(1);
+            yield return WaitIdle();
+            Log("   +" + j + " " + DescribeNow());
+        }
+        Finish("probe-predict.txt");
     }
 
     // Loads a movie, makes a clean run of it, then goes back one frame at a time (like holding B) and

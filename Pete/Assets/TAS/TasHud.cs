@@ -434,6 +434,7 @@ public class TasHud : MonoBehaviour
         TasPredict.ShowAttacks = ColorToggle(TasPredict.ShowAttacks, TasPredict.PogoColor, "Attacks", 140);
         TasPredict.ShowKnockback = ColorToggle(TasPredict.ShowKnockback, new Color(1f, 0.15f, 0.15f), "Knockback & labels");
         GUILayout.EndHorizontal();
+        TasPredict.ShowNames = GUILayout.Toggle(TasPredict.ShowNames, " Name at the end of each line", toggle);
         TasPredict pr = TasPredict.I;
         if(pr != null)
         {
@@ -466,11 +467,12 @@ public class TasHud : MonoBehaviour
 
     // Text next to the prediction lines ("HIT", "knockback over (10 f)", "lands", "stops here")
     private readonly List<Rect> placedTags = new List<Rect>();
+    private readonly List<KeyValuePair<int, string>> tagList = new List<KeyValuePair<int, string>>();
 
     private void DrawPredictionLabels()
     {
         TasPredict pr = TasPredict.I;
-        if(pr == null || !TasPredict.ShowKnockback || !TasPredict.Active(M) || M.Busy || Event.current.type != EventType.Repaint)
+        if(pr == null || (!TasPredict.ShowKnockback && !TasPredict.ShowNames) || !TasPredict.Active(M) || M.Busy || Event.current.type != EventType.Repaint)
         {
             return;
         }
@@ -483,7 +485,34 @@ public class TasHud : MonoBehaviour
         Color old = GUI.color;
         foreach(TasPrediction p in pr.Lines)
         {
-            foreach(KeyValuePair<int, string> l in p.Labels)
+            // The line's name at the last bit of it that's on screen, then what happens along it
+            // (everything for the green line; only the first thing for the others, to keep it readable)
+            tagList.Clear();
+            if(TasPredict.ShowNames && !string.IsNullOrEmpty(p.Tag) && p.Pos.Count > 0)
+            {
+                Rect open = OpenArea();
+                for(int i = p.Pos.Count - 1; i >= 0; i--)
+                {
+                    Vector3 sp = cam.WorldToScreenPoint(new Vector3(p.Pos[i].x, p.Pos[i].y, 0f));
+                    if(open.Contains(new Vector2(sp.x, Screen.height - sp.y)))
+                    {
+                        tagList.Add(new KeyValuePair<int, string>(i, p.Tag));
+                        break;
+                    }
+                }
+            }
+            if(TasPredict.ShowKnockback && p.Labels.Count > 0)
+            {
+                if(p == pr.Path)
+                {
+                    tagList.AddRange(p.Labels);
+                }
+                else
+                {
+                    tagList.Add(p.Labels[0]);
+                }
+            }
+            foreach(KeyValuePair<int, string> l in tagList)
             {
                 if(l.Key < 0 || l.Key >= p.Pos.Count)
                 {
@@ -494,6 +523,11 @@ public class TasHud : MonoBehaviour
                 GUIContent content = new GUIContent(l.Value);
                 Vector2 size = tag.CalcSize(content);
                 Rect r = new Rect(at.x - size.x * 0.5f - 3f, at.y - size.y - 16f, size.x + 6f, size.y);
+                // Keep it fully inside the part of the screen the panels don't cover
+                Rect openGui = OpenArea();
+                float minX = openGui.xMin / scale + 2f, maxX = openGui.xMax / scale - r.width - 2f;
+                r.x = Mathf.Clamp(r.x, minX, Mathf.Max(minX, maxX));
+                r.y = Mathf.Clamp(r.y, openGui.yMin / scale + 2f, Mathf.Max(openGui.yMin / scale + 2f, openGui.yMax / scale - r.height - 2f));
                 // Don't stack labels on top of each other
                 for(int tries = 0; tries < 6; tries++)
                 {
@@ -877,7 +911,15 @@ public class TasHud : MonoBehaviour
         rollFollow = GUI.Toggle(new Rect(r.x + r.width - 82, r.y + 6, 80, 20), rollFollow, " Follow", toggle);
         for(int c = 0; c < 6; c++)
         {
-            GUI.Label(new Rect(r.x + 8 + numW + c * colW, r.y + 12, colW, 18), RollNames[c], small);
+            Rect hr = new Rect(r.x + 8 + numW + c * colW, r.y + 8, colW - 3, 20);
+            if(HasSelection)
+            {
+                DrawRect(hr, new Color(0.25f, 0.45f, 0.95f, 0.55f));
+            }
+            if(GUI.Button(hr, new GUIContent(RollNames[c], "Turn this button on or off for all the selected frames"), small) && !m.Busy)
+            {
+                FillSelection(c);
+            }
         }
 
         if(rollFollow)
@@ -962,7 +1004,24 @@ public class TasHud : MonoBehaviour
         // Painting: click a cell to flip it, drag down the column to paint more frames the same way
         if(!m.Busy)
         {
-            if(e.type == EventType.MouseDown && e.button == 0 && hoverFrame >= 1 && hoverCol >= 0)
+            if(e.type == EventType.MouseDown && e.button == 0 && hoverFrame >= 1 && hoverCol >= 0 && e.shift && anchorFrame >= 1 && anchorCol == hoverCol)
+            {
+                // Shift+click: everything from the last clicked square to this one gets the same value
+                paintColumn = hoverCol;
+                paintValue = anchorValue;
+                paintEdits.Clear();
+                lastPaintFrame = anchorFrame;
+                Paint(hoverFrame);
+                Dictionary<int, Buttons> edits = new Dictionary<int, Buttons>(paintEdits);
+                paintEdits.Clear();
+                lastPaintFrame = -1;
+                int lo = Mathf.Min(anchorFrame, hoverFrame), hi = Mathf.Max(anchorFrame, hoverFrame);
+                m.SetInputs(edits);
+                m.Say((anchorValue ? "Turned on " : "Turned off ") + RollNames[hoverCol] + " for frames " + lo + "-" + hi + " (" + (hi - lo + 1) + " frames).");
+                anchorFrame = hoverFrame;
+                e.Use();
+            }
+            else if(e.type == EventType.MouseDown && e.button == 0 && hoverFrame >= 1 && hoverCol >= 0)
             {
                 painting = true;
                 paintColumn = hoverCol;
@@ -971,7 +1030,36 @@ public class TasHud : MonoBehaviour
                 paintEdits.Clear();
                 lastPaintFrame = -1;
                 Paint(hoverFrame);
+                anchorFrame = hoverFrame;
+                anchorCol = hoverCol;
+                anchorValue = paintValue;
+                autoScroll = 0f;
                 e.Use();
+            }
+            else if(e.type == EventType.Repaint && painting && !Input.GetMouseButton(0))
+            {
+                // The mouse was let go somewhere the grid didn't hear about (outside the window): finish the stroke
+                painting = false;
+                Dictionary<int, Buttons> edits = new Dictionary<int, Buttons>(paintEdits);
+                paintEdits.Clear();
+                m.SetInputs(edits);
+            }
+            else if(e.type == EventType.Repaint && painting)
+            {
+                // Dragging past the top or bottom of the grid scrolls it (faster the further out) and keeps painting
+                float my = e.mousePosition.y;
+                float gridBottom = top + rows * rowH;
+                float over = my < top ? my - top : my > gridBottom ? my - gridBottom : 0f;
+                if(over != 0f)
+                {
+                    rollFollow = false;
+                    float speed = Mathf.Clamp(Mathf.Abs(over) / rowH * 8f, 6f, 150f);
+                    autoScroll += Mathf.Sign(over) * speed * Time.unscaledDeltaTime;
+                    int stepRows = (int)autoScroll;
+                    autoScroll -= stepRows;
+                    rollTop = Mathf.Max(1, rollTop + stepRows);
+                    Paint(over > 0f ? rollTop + rows - 1 : rollTop);
+                }
             }
             else if(e.type == EventType.MouseDrag && painting && hoverFrame >= 1)
             {
@@ -992,7 +1080,7 @@ public class TasHud : MonoBehaviour
         float by = r.y + r.height - bottomBar + 4;
         int editFrame = HasSelection ? SelLo : m.Frame + 1;
         string selText = HasSelection
-            ? "Selected frames " + SelLo + "-" + SelHi + " (" + SelCount + ")"
+            ? "Selected " + SelLo + "-" + SelHi + " (" + SelCount + "). Click L R U D J A at the top to fill them."
             : "Shift+click frame numbers to select frames";
         GUI.Label(new Rect(r.x + 8, by, r.width - 16, 18), selText, small);
         float bw = (r.width - 16 - 9) / 4f;
@@ -1069,6 +1157,48 @@ public class TasHud : MonoBehaviour
     }
 
     private int lastPaintFrame = -1;
+    // The last square clicked (Shift+click another one in the same column to fill everything between)
+    private int anchorFrame = -1;
+    private int anchorCol = -1;
+    private bool anchorValue;
+    private float autoScroll;
+
+    // Same as clicking a column name with frames selected (used by the visual test)
+    public void FillSelectionColumn(int column)
+    {
+        FillSelection(column);
+    }
+
+    // Turns one button on or off for every selected frame (on if any of them is missing it, otherwise off)
+    private void FillSelection(int column)
+    {
+        if(!HasSelection)
+        {
+            M.Say("Select frames first (Shift+click two frame numbers), then click " + RollNames[column] + " here to turn it on or off for all of them. Or click a square and Shift+click another one in the same column.");
+            return;
+        }
+        Buttons flag = RollButtons[column];
+        bool allOn = true;
+        for(int f = SelLo; f <= SelHi; f++)
+        {
+            if((M.Movie.Get(f) & flag) == 0)
+            {
+                allOn = false;
+                break;
+            }
+        }
+        Dictionary<int, Buttons> edits = new Dictionary<int, Buttons>();
+        for(int f = SelLo; f <= SelHi; f++)
+        {
+            Buttons b = M.Movie.Get(f);
+            b = allOn ? (b & ~flag) : (b | flag);
+            if(!allOn && flag == Buttons.Left) b &= ~Buttons.Right;
+            if(!allOn && flag == Buttons.Right) b &= ~Buttons.Left;
+            edits[f] = b;
+        }
+        M.SetInputs(edits);
+        M.Say((allOn ? "Turned off " : "Turned on ") + RollNames[column] + " for frames " + SelLo + "-" + SelHi + " (" + SelCount + " frames).");
+    }
 
     // Paints this frame, plus any rows a fast drag skipped over
     private void Paint(int frame)

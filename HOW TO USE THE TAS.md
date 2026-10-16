@@ -17,7 +17,11 @@ The level starts frozen on **frame 0**. One frame is 1/50th of a second, the sam
   - knockback, HP, orbs
 - **Right side, INPUTS grid:** one row per frame. The columns are **L R U D J A** (left, right, up, down, jump, attack).
   - Click a square to turn that button on or off for that frame.
-  - Drag down a column to paint lots of frames at once.
+  - Drag down a column to paint lots of frames at once. Drag past the top or bottom of the grid and it scrolls by itself (faster the further you go), so you can keep painting.
+  - To fill hundreds of frames at once:
+    - click a square, then **Shift+click** another square in the same column, and every frame in between gets the same value
+    - or select frames (Shift+click two frame numbers), then click a column name (**L R U D J A**) at the top of the grid to turn that button on (or off) for all of them
+  - **Label for frame** (under the grid) is a bookmark: type a note for the current frame and press **Set**. It shows next to the frame number (◆) and as an orange dot on the route. It doesn't change the run.
   - Click a frame number to jump to that frame.
   - Green rows are checked exact, yellow rows aren't checked yet, and red marks a problem.
 - **Bottom, SPEED graph:** Pete's x speed (blue) and y speed (pink) over time, with the newest ghost's speed as a grey dashed line.
@@ -110,16 +114,17 @@ Each kind of line has its own tick box in the View tab, so you can show only the
   - While recording, it follows the keys you're holding right now, so you can see where you'll land before you get there.
   - Normally, past the end of the movie, it keeps holding the last frame's buttons.
   - Tick **...to where inputs end** and it follows the whole rest of the movie instead, then lets go of everything and shows where Pete **stops**.
-- **Blue: longest jump.** Hold jump from the next frame on.
-- **Purple: shortest jump.** Tap jump for a single frame, the lowest hop you can do.
+- **Blue: longest jump.** Hold jump from the next frame on. Its name tag says how many frames of holding make a difference ("hold 27 f"). Holding jump only lowers gravity while Pete is still going up, so holding any longer than that changes nothing.
+- **Purple: shortest jump.** Tap jump for a single frame, the lowest hop you can do. If jump is already held, the shortest you can still get is letting go right now, and the tag says so.
 - **Yellow: let go of jump.** Useful while Pete is rising with jump held: it shows how much shorter the jump gets if you let go now.
-  - The jump lines only show up when they'd go somewhere different from the green line (no line means no jump is possible right now).
+  - The jump lines you've ticked always show. When one goes exactly where the green line goes (for example, "let go of jump" after you've already let go), it's drawn as a thin colored line down the middle of the green one.
 - **Red: if an enemy hits you.** One line for each enemy or spike near Pete that can hurt him right now, showing where the knockback throws him.
 - **Attacks: what happens if you attack on the next frame.** Orange is forward, pink is up, tan is down (the pogo). They only show up when the swing actually hits something and changes where Pete goes. For example, they show a **fly pull**: Pete's sword hits the fly while the fly hits Pete.
+- **Name at the end of each line** (tick box): every line gets its name in its own color at its end ("your path", "longest jump: hold 27 f", "if the Fly hits you", "attack now"), so you can always tell which is which.
+- **Red X:** a hit on that line. On the green line it means your inputs really do get Pete hit there. On the other lines it means "if you did this instead, you'd get hit here".
 - **Knockback & labels:**
   - Any part of a line where Pete is being knocked back gets a wide red band.
-  - A red dot marks each hit.
-  - Labels say what happens and when: **HIT**, **knockback over (10 f)**, **hits the Fly**, **pogo**, **defeats the Larva**, **lands (+12 f)**, **inputs end**, **stops here**.
+  - Labels say what happens and when: **Fly hits you -1 HP**, **knockback over (10 f)**, **hits the Fly** (your sword), **pogo**, **defeats the Larva**, **lands (+12 f)**, **inputs end**, **stops here**.
 - **Markers:** dots every 10 frames, a small circle where a jump starts, a bar under Pete's feet where he lands, and a green outline of Pete where the green line first lands.
 - **- / +** next to the main tick box sets how far ahead the lines go (0.5 to 5 seconds).
 - The Video tab has **Show prediction lines** too, if you want them in a video.

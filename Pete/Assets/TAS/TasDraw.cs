@@ -259,10 +259,16 @@ public class TasDraw : MonoBehaviour
     // ---------------------------------------------------------------
     private void DrawPredictions(TasPredict pr, float z)
     {
-        // Back to front, so the green "your path" line ends up on top
+        // Back to front, so the green "your path" line ends up on top; lines that go exactly where it goes are
+        // drawn last, thin, on top of it
+        for(int pass = 0; pass < 2; pass++)
         for(int li = pr.Lines.Count - 1; li >= 0; li--)
         {
             TasPrediction p = pr.Lines[li];
+            if(p.SameAsPath != (pass == 1))
+            {
+                continue;
+            }
             int n = p.Pos.Count;
             if(TasPredict.ShowKnockback)
             {
@@ -306,8 +312,7 @@ public class TasDraw : MonoBehaviour
             {
                 if(i < n)
                 {
-                    Dot(p.Pos[i], 14f, new Color(1f, 0.15f, 0.15f, 0.9f), z);
-                    Cross(p.Pos[i], 5f, Color.white, z);
+                    Cross(p.Pos[i], 7f, TasPredict.HitColor, z);
                 }
             }
             if(p.DeathAt >= 0 && p.DeathAt < n)
