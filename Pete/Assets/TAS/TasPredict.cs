@@ -1050,12 +1050,26 @@ public class TasPredict : MonoBehaviour
         // A tiny step is what the TAS uses after loading a savestate, but its contact pushes get scaled up a lot on the
         // next normal step, which goes wrong when something is in the middle of a hard impact. A normal-length step doesn't.
         float prime = FullPrime ? fdt : (TasStateRegistry.PrimeStep > 0f ? TasStateRegistry.PrimeStep : 0.00001f);
-        dummy.rotation = 0f;
-        dummy.angularVelocity = 0f;
-        dummy.position = prevPos;
-        dummy.velocity = prevVel;
-        dummy.gravityScale = gs0;
-        physics.Simulate(prime);
+        // Two steps: the first finds what's near what, the second works out what's actually touching
+        for(int i = 0; i < 2; i++)
+        {
+            dummy.rotation = 0f;
+            dummy.angularVelocity = 0f;
+            dummy.position = prevPos;
+            dummy.velocity = prevVel;
+            dummy.gravityScale = gs0;
+            if(i > 0)
+            {
+                foreach(Foe f in foes)
+                {
+                    if(f.Simulated)
+                    {
+                        PlaceFoe(f);
+                    }
+                }
+            }
+            physics.Simulate(prime);
+        }
         dummy.position = pos0;
         dummy.velocity = vel0;
         dummy.gravityScale = gs0;

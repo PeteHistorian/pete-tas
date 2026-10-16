@@ -412,6 +412,11 @@ public class TasManager : MonoBehaviour
 
     private bool DecideTick()
     {
+        if(needExactReplay && (CurrentMode == Mode.Paused || CurrentMode == Mode.Playing || CurrentMode == Mode.Seeking))
+        {
+            StartExactReplay();
+            return false;
+        }
         bool blocked = TasHooks.PlayerDied || TasHooks.Finished;
         switch(CurrentMode)
         {
@@ -503,6 +508,41 @@ public class TasManager : MonoBehaviour
         return false;
     }
 
+    // Called after every frame the game runs (used by the self-test to trace what happens)
+    public static Action TickHook;
+
+    // ---------- Never show a rewind that came out different ----------
+    // Loading a savestate can't recreate everything hidden inside Unity's physics engine (for example the order it
+    // reports touches in), so very rarely a rewind comes out a tiny bit different from the first run. When that
+    // happens the tool notices (each frame is compared with the first run) and replays from the start instead.
+    public bool AutoExact = true;
+    public int AutoExactReplays;
+    private bool needExactReplay;
+    private int suspectFrame = -1;
+
+    private void StartExactReplay()
+    {
+        needExactReplay = false;
+        AutoExactReplays++;
+        int target = CurrentMode == Mode.Seeking && seekTarget >= 0 ? seekTarget : Frame;
+        bool resumePlaying = CurrentMode == Mode.Playing;
+        Action then = afterSeek;
+        afterSeek = null;
+        seekTarget = -1;
+        Say("Frame " + suspectFrame + " came out slightly different after going back, so the tool replayed from the start to get the exact result.", 6f);
+        ReplayFromStart(target, () =>
+        {
+            if(then != null)
+            {
+                then();
+            }
+            if(resumePlaying && CurrentMode == Mode.Paused)
+            {
+                SetMode(Mode.Playing);
+            }
+        });
+    }
+
     private Action afterSeek;
     private int lastReportedDesync = -1;
     private TasSnapshot lastStart;
@@ -522,6 +562,10 @@ public class TasManager : MonoBehaviour
         {
             // The level is being unloaded (for example the end screen is loading)
             return;
+        }
+        if(TickHook != null)
+        {
+            TickHook();
         }
         float t0 = Time.realtimeSinceStartup;
         TasSnapshot snap = Registry.Capture(Frame);
@@ -562,6 +606,23 @@ public class TasManager : MonoBehaviour
             else if(old.Fingerprint == rec.Fingerprint)
             {
                 rec.Verified |= old.Verified;
+            }
+            else if(AutoExact && RestoredSinceBoot)
+            {
+                // This came from loading a savestate and it's not what the first run did. Keep the first run's
+                // record of the frame and replay from the very start (always exact) instead of showing it.
+                if(!needExactReplay)
+                {
+                    suspectFrame = Frame;
+                    TasSnapshot before = GetSnapshot(Frame);
+                    if(before != null)
+                    {
+                        Debug.Log("[TAS] Frame " + Frame + " came out different after loading a savestate; replaying from the start:\n" + Registry.DescribeDiff(before, snap, 8));
+                    }
+                }
+                needExactReplay = true;
+                HandleDeathAndFinish();
+                return;
             }
             else
             {
@@ -739,6 +800,7 @@ public class TasManager : MonoBehaviour
         snapshots.Clear();
         SnapshotBytes = 0;
         RestoredSinceBoot = false;
+        needExactReplay = false;
         DeathFrame = -1;
         FinishFrame = -1;
 

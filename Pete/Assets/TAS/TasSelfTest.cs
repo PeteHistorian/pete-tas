@@ -56,6 +56,17 @@ public class TasSelfTest : MonoBehaviour
             yield return ProbeAttacks();
             yield break;
         }
+        string primeStepArg = ArgAfter("-primeStep");
+        if(primeStepArg != null)
+        {
+            TasStateRegistry.PrimeStep = float.Parse(primeStepArg, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        string primeStepsArg = ArgAfter("-primeSteps");
+        if(primeStepsArg != null)
+        {
+            TasStateRegistry.PrimeSteps = int.Parse(primeStepsArg);
+        }
+        Log("Rewind warm-up: " + TasStateRegistry.PrimeSteps + " step(s) of " + TasStateRegistry.PrimeStep);
         string checkMovie = ArgAfter("-tasCheckMovie");
         if(checkMovie != null)
         {
@@ -109,7 +120,9 @@ public class TasSelfTest : MonoBehaviour
         int bestAnimMode = 1;
         int bestLeadIn = int.MaxValue;
         float bestStep = 0.00001f;
-        foreach(float primeStep in new[] { 0.00001f, 0f })
+        // Measure how exact rewinds really are, without the automatic replay from the start that hides differences
+        M.AutoExact = false;
+        foreach(float primeStep in new[] { 0.00001f, 0.02f })
         {
             int animMode = 1;
             TasManager.PrimeMode mode = TasManager.PrimeMode.PreviousFrame;
@@ -210,6 +223,7 @@ public class TasSelfTest : MonoBehaviour
         TasStateRegistry.PrimeStep = bestStep;
         M.Priming = TasManager.PrimeMode.PreviousFrame;
         TasStateRegistry.AnimRestoreMode = bestAnimMode;
+        M.AutoExact = true;
 
         // 3b. Changing an earlier input while standing on a later frame replays to the exact new result
         {
@@ -531,6 +545,7 @@ public class TasSelfTest : MonoBehaviour
         int last = M.Frame;
         Log("Clean run of " + name + " to frame " + last + " (movie " + M.Movie.Length + " frames), death " + M.DeathFrame + ", desync " + M.DesyncFrame);
         M.DesyncFrame = -1;
+        M.AutoExact = false;
         int bad = 0;
         for(int k = last - 1; k >= 1; k--)
         {
@@ -539,6 +554,7 @@ public class TasSelfTest : MonoBehaviour
             if(M.DesyncFrame >= 0)
             {
                 bad++;
+                badFrames.Add(k);
                 Log("Going back to " + k + ": frame " + M.DesyncFrame + " came out different");
                 M.DesyncFrame = -1;
                 M.Verify();
@@ -547,7 +563,121 @@ public class TasSelfTest : MonoBehaviour
             }
         }
         Log("Rewinds that came out different: " + bad + " of " + (last - 1));
+        // Same again with the automatic replay from the start switched on: no difference should ever be shown
+        M.AutoExact = true;
+        M.Verify();
+        yield return WaitIdle();
+        M.DesyncFrame = -1;
+        int replaysBefore = M.AutoExactReplays;
+        int shown = 0;
+        for(int k = last - 1; k >= 1; k--)
+        {
+            M.Seek(k);
+            yield return WaitIdle();
+            if(M.DesyncFrame >= 0 || M.Frame != k)
+            {
+                shown++;
+                Log("With the safety net on, going back to " + k + " still showed a difference (frame " + M.DesyncFrame + ", now on " + M.Frame + ")");
+                M.DesyncFrame = -1;
+            }
+        }
+        Log("With the safety net on: differences shown " + shown + ", automatic replays from the start " + (M.AutoExactReplays - replaysBefore));
+        M.AutoExact = false;
+        // Trace a few of them frame by frame against the clean run
+        // (earliest ones first: they're the least tangled up with earlier differences)
+        int traced = TasManager.HasArg("-noTrace") ? 99 : 0;
+        for(int bi = badFrames.Count - 1; bi >= 0 && traced < 6; bi--, traced++)
+        {
+            yield return TraceRewind(badFrames[bi]);
+        }
         Finish("check-movie.txt");
+    }
+
+    private readonly List<int> badFrames = new List<int>();
+    private readonly Dictionary<int, string> trace = new Dictionary<int, string>();
+    private string soundsThisTick = "";
+
+    // Pete's state after a frame, as text (for comparing two runs)
+    private string DescribeNow()
+    {
+        TasManager m = M;
+        if(m.Player == null || !m.Player.Valid) return "-";
+        Rigidbody2D rb = m.Player.Rb;
+        GameObject pete = m.Player.Go;
+        StringBuilder sb = new StringBuilder();
+        sb.Append("pos " + rb.position.x.ToString("R") + "," + rb.position.y.ToString("R") + " vel " + rb.velocity.x.ToString("R") + "," + rb.velocity.y.ToString("R"));
+        System.Reflection.FieldInfo landed = typeof(Jump).GetField("hasLanded", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        sb.Append(" ground " + m.Player.OnGround + " landed " + (landed != null ? landed.GetValue(pete.GetComponent<Jump>()) : "?") + " coyote " + m.Player.CoyoteLeft.ToString("R") + " awake " + rb.IsAwake());
+        ContactPoint2D[] cps = new ContactPoint2D[32];
+        int n = rb.GetContacts(cps);
+        List<string> cs = new List<string>();
+        for(int i = 0; i < n; i++)
+        {
+            Collider2D other = cps[i].collider != null && cps[i].collider.attachedRigidbody == rb ? cps[i].otherCollider : cps[i].collider;
+            cs.Add((other != null ? other.name : "?") + (cps[i].collider != null && cps[i].collider.isTrigger || cps[i].otherCollider != null && cps[i].otherCollider.isTrigger ? "(trigger)" : "") + ":" + cps[i].normal.ToString("F2"));
+        }
+        cs.Sort();
+        sb.Append(" contacts[" + string.Join(" ", cs) + "]");
+        sb.Append(" random " + string.Join(",", TasStateRegistry.RandomStateParts(UnityEngine.Random.state)));
+        return sb.ToString();
+    }
+
+    private void RecordTick()
+    {
+        trace[M.Frame] = DescribeNow() + " sounds[" + soundsThisTick + "]";
+        soundsThisTick = "";
+    }
+
+    // Goes back to frame k the way stepping back does, and compares every frame of the replay with a clean run
+    private IEnumerator TraceRewind(int k)
+    {
+        int from = Mathf.Max(1, k - 34);
+        TasHooks.SoundPlayed = src => soundsThisTick += (src != null && src.clip != null ? src.clip.name : "?") + " ";
+        TasManager.TickHook = RecordTick;
+        trace.Clear();
+        soundsThisTick = "";
+        M.ReplayFromStart(from);
+        yield return WaitIdle();
+        while(M.Frame < k + 3)
+        {
+            M.StepForward(1);
+            yield return WaitIdle();
+        }
+        Dictionary<int, string> clean = new Dictionary<int, string>(trace);
+        trace.Clear();
+        soundsThisTick = "";
+        M.Seek(k);
+        int loaded = M.Frame;
+        string afterLoad = DescribeNow();
+        yield return WaitIdle();
+        TasManager.TickHook = null;
+        TasHooks.SoundPlayed = null;
+        Log("Trace of going back to " + k + " (loaded the savestate of frame " + loaded + "):");
+        string c0;
+        if(clean.TryGetValue(loaded, out c0))
+        {
+            string cleanNoSound = c0.Substring(0, c0.IndexOf(" sounds[") < 0 ? c0.Length : c0.IndexOf(" sounds["));
+            if(cleanNoSound != afterLoad)
+            {
+                Log("  right after loading, frame " + loaded + " differs:\n    clean:  " + cleanNoSound + "\n    loaded: " + afterLoad);
+            }
+        }
+        int shown = 0;
+        for(int f = loaded + 1; f <= k && shown < 3; f++)
+        {
+            string a, b;
+            clean.TryGetValue(f, out a);
+            trace.TryGetValue(f, out b);
+            if(a != b)
+            {
+                shown++;
+                Log("  frame " + f + " differs:\n    clean:  " + a + "\n    replay: " + b);
+            }
+        }
+        if(shown == 0)
+        {
+            Log("  every traced frame matched");
+        }
     }
 
     // The green prediction line should follow the route the real game takes, and working the lines out

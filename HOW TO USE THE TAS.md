@@ -143,6 +143,10 @@ Limits: enemies are moved in a simple way. Walking enemies keep walking (and tur
 
 To go back, the tool loads a savestate from just over half a second earlier and replays forward at top speed with the level hidden. While it does, the screen keeps showing the level as it was, so it doesn't flash. The same goes for Verify, loading a movie and the auto-search.
 
+Very rarely, loading a savestate can't recreate something hidden inside Unity's physics engine. For example, when Pete touches a fly and the ground at the same moment, the order the engine reports those touches in can't be recreated. That rewind would then come out a tiny bit different from the first time.
+
+The tool checks every frame it has seen before. If one comes out different after going back, it replays from the very start instead, which is always exact. You'll see a short message when that happens, and it takes a moment longer than a normal step back.
+
 ## The colored light (top left)
 
 - **Green:** every frame up to here has been checked exact.

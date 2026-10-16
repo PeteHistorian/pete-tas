@@ -55,6 +55,9 @@ public class TasStateRegistry
         public TMP_Text Text;
         public bool Spawned;
         public bool EverActive;
+        // Only moves the camera (Cinemachine cameras): saved and loaded, but not part of the fingerprint,
+        // because it never changes gameplay and it settles differently right after a rewind
+        public bool CameraOnly;
     }
 
     // Scripts whose state doesn't affect gameplay (audio, menus) or that manage scene loading.
@@ -296,6 +299,15 @@ public class TasStateRegistry
             }
         }
         e.Scripts = scripts.ToArray();
+        bool cameraStuff = go.GetComponent<Camera>() != null;
+        foreach(MonoBehaviour mb in go.GetComponents<MonoBehaviour>())
+        {
+            if(mb != null && mb.GetType().Namespace == "Cinemachine")
+            {
+                cameraStuff = true;
+            }
+        }
+        e.CameraOnly = cameraStuff && e.Scripts.Length == 0 && e.Rb == null && go.GetComponent<Collider2D>() == null;
         e.ScriptFields = new FieldSlot[e.Scripts.Length][];
         for(int i = 0; i < e.Scripts.Length; i++)
         {
@@ -430,6 +442,7 @@ public class TasStateRegistry
     private void CaptureEntry(Entry e)
     {
         if(labeling) ctx = PathOf(e.T) + " ";
+        int camF0 = wf.Count;
         AI(e.Go.activeSelf ? 1 : 0, "active");
         if(e.Go.activeInHierarchy)
         {
@@ -500,6 +513,10 @@ public class TasStateRegistry
         if(e.Text != null)
         {
             wo.Add(e.Text.text);
+        }
+        if(e.CameraOnly && wf.Count > camF0)
+        {
+            skipF.Add(new Vector2Int(camF0, wf.Count));
         }
     }
 
@@ -676,8 +693,14 @@ public class TasStateRegistry
         {
             if(primeWith != null)
             {
-                Apply(primeWith, true);
-                SimulateZeroStep();
+                // Two steps: the first lets the engine find what's near what, the second works out what's
+                // actually touching (with only one, it thinks nothing is touching, so e.g. Pete jumping off the
+                // ground right after a rewind never "leaves" it and the game keeps thinking he's on the ground)
+                for(int i = 0; i < PrimeSteps; i++)
+                {
+                    Apply(primeWith, true);
+                    SimulateZeroStep();
+                }
             }
             Apply(snap, false);
         }
@@ -690,6 +713,7 @@ public class TasStateRegistry
     // Length of the tiny physics step used to warm up the physics engine after loading a savestate.
     // It has to be more than zero so the engine also creates contacts between things that are just about to touch.
     public static float PrimeStep = 0.00001f;
+    public static int PrimeSteps = 2;
 
     // How animators are put back: 0 = Play only (applied on the next animator update), 1 = Play and apply straight away
     public static int AnimRestoreMode = 1;
