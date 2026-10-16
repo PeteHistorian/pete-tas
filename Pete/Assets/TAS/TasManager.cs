@@ -115,6 +115,12 @@ public class TasManager : MonoBehaviour
     private float autosaveAt;
     private Camera fastModeCamera;
 
+    // True while the TAS replays at full speed with the level hidden (going back, reloading, searching)
+    public bool FastMode
+    {
+        get { return fastMode; }
+    }
+
     public static bool ShouldRunTas()
     {
 #if UNITY_EDITOR
@@ -287,6 +293,11 @@ public class TasManager : MonoBehaviour
             Buttons keys = ReadPlayerInput();
             if(keys != Movie.Get(f) || f > Movie.Length)
             {
+                if(!recordingRemembered)
+                {
+                    Remember("recording from frame " + f);
+                    recordingRemembered = true;
+                }
                 InvalidateFrom(f, false);
                 Movie.Set(f, keys);
                 MovieDirty = true;
@@ -391,6 +402,11 @@ public class TasManager : MonoBehaviour
         if(MovieDirty && Time.unscaledTime > autosaveAt)
         {
             Autosave(false);
+        }
+        if(!Recording)
+        {
+            // The next stretch of recording gets its own undo step
+            recordingRemembered = false;
         }
     }
 
@@ -1202,6 +1218,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        Remember("change frame " + frame);
         int keep = Frame;
         InvalidateFrom(frame, true);
         Movie.Set(frame, b);
@@ -1228,6 +1245,12 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        int max = 0;
+        foreach(int f in edits.Keys)
+        {
+            max = Mathf.Max(max, f);
+        }
+        Remember(max > min ? "paint frames " + min + "-" + max : "change frame " + min);
         int keep = Frame;
         InvalidateFrom(min, true);
         foreach(KeyValuePair<int, Buttons> e in edits)
@@ -1258,6 +1281,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        Remember(inputs.Count == 1 ? "insert a frame at " + frame : "insert " + inputs.Count + " frames at " + frame);
         int keep = Frame;
         InvalidateFrom(frame, true);
         Movie.InsertRange(frame, inputs);
@@ -1272,6 +1296,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        Remember(count == 1 ? "delete frame " + frame : "delete " + count + " frames at " + frame);
         int keep = Frame;
         InvalidateFrom(frame, true);
         Movie.DeleteRange(frame, count);
@@ -1287,6 +1312,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        Remember("paste " + inputs.Count + " frames at " + frame);
         int keep = Frame;
         InvalidateFrom(frame, true);
         if(removeCount > 0 && frame <= Movie.Length)
@@ -1296,6 +1322,107 @@ public class TasManager : MonoBehaviour
         Movie.InsertRange(frame, inputs);
         MovieDirty = true;
         ResimulateTo(keep, frame);
+    }
+
+    // ---------- Undo and redo ----------
+    // Before every change to the movie a copy of it is kept. Undo puts the copy back and replays from the
+    // first frame that's different, so you see the old result straight away.
+
+    private class UndoStep
+    {
+        public TasMovie Movie;
+        public string Name;
+        public string What;
+    }
+
+    public const int MaxUndo = 300;
+    private readonly List<UndoStep> undoSteps = new List<UndoStep>();
+    private readonly List<UndoStep> redoSteps = new List<UndoStep>();
+    private bool recordingRemembered;
+
+    public int UndoCount { get { return undoSteps.Count; } }
+    public int RedoCount { get { return redoSteps.Count; } }
+    public string UndoWhat { get { return undoSteps.Count > 0 ? undoSteps[undoSteps.Count - 1].What : ""; } }
+    public string RedoWhat { get { return redoSteps.Count > 0 ? redoSteps[redoSteps.Count - 1].What : ""; } }
+
+    // Call just before changing the movie
+    private void Remember(string what)
+    {
+        UndoStep step = new UndoStep();
+        step.Movie = Movie.Clone();
+        step.Name = MovieName;
+        step.What = what;
+        undoSteps.Add(step);
+        if(undoSteps.Count > MaxUndo)
+        {
+            undoSteps.RemoveAt(0);
+        }
+        redoSteps.Clear();
+        recordingRemembered = false;
+    }
+
+    public void Undo()
+    {
+        UndoRedo(undoSteps, redoSteps, true);
+    }
+
+    public void Redo()
+    {
+        UndoRedo(redoSteps, undoSteps, false);
+    }
+
+    private void UndoRedo(List<UndoStep> from, List<UndoStep> to, bool undo)
+    {
+        if(CurrentMode == Mode.Playing)
+        {
+            SetMode(Mode.Paused);
+        }
+        if(Busy || CurrentMode == Mode.Video || CurrentMode == Mode.VideoEndScreen)
+        {
+            return;
+        }
+        if(from.Count == 0)
+        {
+            Say(undo ? "Nothing to undo." : "Nothing to redo.");
+            return;
+        }
+        UndoStep step = from[from.Count - 1];
+        from.RemoveAt(from.Count - 1);
+        UndoStep back = new UndoStep();
+        back.Movie = Movie.Clone();
+        back.Name = MovieName;
+        back.What = step.What;
+        to.Add(back);
+        recordingRemembered = false;
+
+        int diff = FirstDifference(Movie, step.Movie);
+        int keep = Frame;
+        if(diff >= 1)
+        {
+            InvalidateFrom(diff, true);
+        }
+        Movie = step.Movie.Clone();
+        MovieName = step.Name;
+        MovieDirty = true;
+        Say((undo ? "Undo: " : "Redo: ") + step.What + (diff >= 1 ? " (inputs change from frame " + diff + ")" : "") + ".");
+        if(diff >= 1)
+        {
+            ResimulateTo(keep, diff);
+        }
+    }
+
+    // The first frame whose input is different, or -1 if every input is the same
+    private static int FirstDifference(TasMovie a, TasMovie b)
+    {
+        int n = Math.Max(a.Length, b.Length);
+        for(int f = 1; f <= n; f++)
+        {
+            if(a.Get(f) != b.Get(f))
+            {
+                return f;
+            }
+        }
+        return -1;
     }
 
     // ---------- Copy, paste and presets ----------
@@ -1371,6 +1498,7 @@ public class TasManager : MonoBehaviour
         }
         if(frame + 1 <= Movie.Length)
         {
+            Remember("clear everything after frame " + frame);
             InvalidateFrom(frame + 1, true);
             Movie.TruncateAfter(frame);
             MovieDirty = true;
@@ -1379,6 +1507,13 @@ public class TasManager : MonoBehaviour
 
     public void SetMarker(int frame, string text)
     {
+        string old;
+        Movie.Markers.TryGetValue(frame, out old);
+        if((old ?? "") == (text ?? ""))
+        {
+            return;
+        }
+        Remember("label on frame " + frame);
         if(string.IsNullOrEmpty(text))
         {
             Movie.Markers.Remove(frame);
@@ -1508,6 +1643,7 @@ public class TasManager : MonoBehaviour
         try
         {
             TasMovie loaded = TasMovie.Load(MoviePath(name));
+            Remember("load " + Path.GetFileNameWithoutExtension(name));
             int keep = Frame;
             InvalidateFrom(1, true);
             Movie = loaded;
@@ -1529,6 +1665,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        Remember("switch to " + name);
         InvalidateFrom(1, true);
         Movie = movie;
         MovieName = name;
@@ -1542,6 +1679,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        Remember("new empty movie");
         InvalidateFrom(1, true);
         Movie = new TasMovie();
         MovieName = "pete-tas";
@@ -1703,6 +1841,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        Remember("apply the search result");
         InvalidateFrom(firstFrame, true);
         for(int i = 0; i < inputs.Count; i++)
         {

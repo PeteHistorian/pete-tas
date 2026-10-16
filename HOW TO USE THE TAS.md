@@ -40,6 +40,7 @@ The level starts frozen on **frame 0**. One frame is 1/50th of a second, the sam
 | **T** | show / hide prediction lines |
 | **C** | center the camera on Pete |
 | **Shift + click** frame numbers | select a range of frames |
+| **Ctrl + Z / Ctrl + Y** | undo / redo (Ctrl + Shift + Z also redoes) |
 | **Ctrl + C / Ctrl + V** | copy / paste frames |
 | **Delete** | delete the selected frames |
 | **G / L** | View tab / Lines tab |
@@ -67,12 +68,22 @@ The level starts frozen on **frame 0**. One frame is 1/50th of a second, the sam
   - Select the frames, type a name and press **Save selection**.
   - Later, press **Paste** next to the preset to drop it in (same rules as above).
   - Presets are saved as files in `TAS Files\Presets`, so they work in any movie.
-- **Moving a lot of frames at once:** under "Move everything from frame X on", set a number with **-** and **+** (Shift+click changes it by 10). Then:
+- **Moving a lot of frames at once:** under "Move everything from frame X on", type a number in the box (or use **-** and **+**; Shift+click changes it by 10). Then:
   - **Later +N** inserts N empty frames, pushing everything after later.
   - **Earlier -N** deletes N frames, pulling everything after earlier.
 
   Use this when you find a faster way earlier in the run and need the rest to line up again. It works from the selected frame, or from the next frame if nothing is selected.
 - **Delete** (or the Delete key) removes the selected frames, and everything after moves up.
+
+## Undo and redo
+
+**Undo** (Ctrl+Z) takes back the last change to the movie, and **Redo** (Ctrl+Y) puts it back. The buttons are under Record / Speed / Verify.
+
+- Every kind of change counts: clicking or painting the grid, pasting, inserting or deleting frames, labels, applying a search result, loading a movie, and recording.
+  - A whole drag of painting is one step.
+  - Each stretch of recording is one step.
+- After an undo, the tool replays from the first frame that changed, so you see the old result straight away. You stay on the same frame.
+- Up to 300 steps are kept. Making a new change after undoing clears the redo steps.
 
 ## Center camera
 
@@ -93,30 +104,31 @@ Tick **Level collision too** to also see every floor and wall tile (white) and t
 
 Press **T**, or tick **Prediction lines** in the View tab. Lines show where Pete is heading from the frame you're on. They update every frame, even while the run is playing or you're recording.
 
+Each kind of line has its own tick box in the View tab, so you can show only the ones you want:
+
 - **Green: your path.** Where your inputs take Pete.
   - While recording, it follows the keys you're holding right now, so you can see where you'll land before you get there.
-  - Past the end of the movie, it keeps holding the last frame's buttons.
-- **Blue: hold jump** from the next frame on. **Yellow: let go of jump.** These only show up when they'd go somewhere different from the green line, for example a jump you can still make (coyote time) or a shorter hop.
-- **Red: if an enemy hits you.** One line for each enemy or spike near Pete that can hurt him right now, showing where the knockback would throw him.
-- **Orange: pogo bounce.** When Pete is in the air near an enemy, this shows where he goes if your down-attack hits it right now.
-- **Markers:**
-  - dots every 10 frames
-  - a small circle where a jump starts
-  - a bar under Pete's feet where he lands
-  - a green outline of Pete where the green line first lands
-  - a red X where an enemy would hit him along the way, and a big red X if he'd die
-- **- / +** next to the tick box sets how far ahead the lines go (0.5 to 5 seconds).
+  - Normally, past the end of the movie, it keeps holding the last frame's buttons.
+  - Tick **...to where inputs end** and it follows the whole rest of the movie instead, then lets go of everything and shows where Pete **stops**.
+- **Blue: longest jump.** Hold jump from the next frame on.
+- **Purple: shortest jump.** Tap jump for a single frame, the lowest hop you can do.
+- **Yellow: let go of jump.** Useful while Pete is rising with jump held: it shows how much shorter the jump gets if you let go now.
+  - The jump lines only show up when they'd go somewhere different from the green line (no line means no jump is possible right now).
+- **Red: if an enemy hits you.** One line for each enemy or spike near Pete that can hurt him right now, showing where the knockback throws him.
+- **Attacks: what happens if you attack on the next frame.** Orange is forward, pink is up, tan is down (the pogo). They only show up when the swing actually hits something and changes where Pete goes. For example, they show a **fly pull**: Pete's sword hits the fly while the fly hits Pete.
+- **Knockback & labels:**
+  - Any part of a line where Pete is being knocked back gets a wide red band.
+  - A red dot marks each hit.
+  - Labels say what happens and when: **HIT**, **knockback over (10 f)**, **hits the Fly**, **pogo**, **defeats the Larva**, **lands (+12 f)**, **inputs end**, **stops here**.
+- **Markers:** dots every 10 frames, a small circle where a jump starts, a bar under Pete's feet where he lands, and a green outline of Pete where the green line first lands.
+- **- / +** next to the main tick box sets how far ahead the lines go (0.5 to 5 seconds).
 - The Video tab has **Show prediction lines** too, if you want them in a video.
 
-How it works: a stand-in Pete runs ahead in a hidden copy of the level. It uses the game's own physics and Pete's own movement rules (speed, jump height, jump hold, coyote time, knockback), so the lines never change your run.
+How it works: a stand-in Pete runs ahead in a hidden copy of the level. It uses the game's own physics and Pete's own rules: speed, jump height, jump hold, coyote time, knockback, and the sword (which frames it's out, its hitbox, damage, enemy knockback and pogo). So the lines never change your run.
 
 When the real route ahead is already known (frames you've played before), the View tab tells you how close the green line is to it.
 
-In the self-test's long run, the green line matched the real route to within 0.01 for a whole second ahead at 61 of 63 test points. The two misses were caused by a sword hit along the way.
-
-Limits:
-- The lines don't know about sword hits along the way. The orange line shows the bounce on its own.
-- Enemies are moved in a simple way: walking enemies keep walking (and turn at walls), and flying enemies chase Pete once they've noticed him.
+Limits: enemies are moved in a simple way. Walking enemies keep walking (and turn at walls), and flying enemies chase Pete once they've noticed him.
 
 ## Finding the fastest line
 
@@ -126,6 +138,10 @@ Limits:
   - **Beam search** tries any mix of buttons.
   - **Jump timing** holds one direction and tries every jump start and hold length.
   - Each result has two buttons: **Ghost** shows it in the level, and **Apply** puts it into your movie. Applied results are checked with an exact replay straight away.
+
+## Going back a frame
+
+To go back, the tool loads a savestate from just over half a second earlier and replays forward at top speed with the level hidden. While it does, the screen keeps showing the level as it was, so it doesn't flash. The same goes for Verify, loading a movie and the auto-search.
 
 ## The colored light (top left)
 

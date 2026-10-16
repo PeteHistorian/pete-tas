@@ -19,6 +19,15 @@ public class TasPrediction
     public readonly List<int> Hits = new List<int>();
     public int JumpAt = -1;
     public int DeathAt = -1;
+    // Frames where Pete is in knockback (pushed by a hit and/or can't move)
+    public readonly List<bool> Knock = new List<bool>();
+    // Text shown next to the line ("HIT", "knockback over (10 f)", "lands", "stops here")
+    public readonly List<KeyValuePair<int, string>> Labels = new List<KeyValuePair<int, string>>();
+
+    public void AddLabel(int index, string text)
+    {
+        Labels.Add(new KeyValuePair<int, string>(index, text));
+    }
 
     public bool SameAs(TasPrediction o, float tolerance)
     {
@@ -51,14 +60,21 @@ public class TasPredict : MonoBehaviour
     // ---------- Settings (View tab) ----------
     public static bool Show = true;
     public static bool ShowPath = true;
-    public static bool ShowJumpChoices = true;
+    // The green line follows the movie to the end of its inputs, then lets go until Pete stops
+    public static bool PathToEnd;
+    public static bool ShowLongJump = true;
+    public static bool ShowShortJump = true;
+    public static bool ShowLetGo = true;
     public static bool ShowHits = true;
-    public static bool ShowPogo = true;
+    public static bool ShowAttacks = true;
+    // Knockback highlighted on the lines, with labels saying how long it lasts and where Pete lands or stops
+    public static bool ShowKnockback = true;
     public static bool ShowInVideo;
     public static int Frames = 75;
     public const float HitRange = 6f;
     public const float PogoRange = 4f;
     public const int MaxHitLines = 4;
+    public const float SwordReach = 6f;
     // When Pete stops touching one thing and keeps touching another on the same frame, which does the game
     // hear about first? (Picked by the self-test.)
     public static bool ExitsFirst = true;
@@ -68,9 +84,13 @@ public class TasPredict : MonoBehaviour
 
     public static readonly Color PathColor = new Color(0.35f, 1f, 0.4f);
     public static readonly Color HoldColor = new Color(0.35f, 0.8f, 1f);
+    public static readonly Color TapColor = new Color(0.8f, 0.5f, 1f);
     public static readonly Color ReleaseColor = new Color(1f, 0.9f, 0.3f);
     public static readonly Color HitColor = new Color(1f, 0.32f, 0.32f);
     public static readonly Color PogoColor = new Color(1f, 0.55f, 0.15f);
+    public static readonly Color AttackColor = new Color(1f, 0.55f, 0.15f);
+    public static readonly Color AttackUpColor = new Color(1f, 0.45f, 0.8f);
+    public static readonly Color AttackDownColor = new Color(0.95f, 0.8f, 0.45f);
 
     // ---------- Results ----------
     public readonly List<TasPrediction> Lines = new List<TasPrediction>();
@@ -142,6 +162,21 @@ public class TasPredict : MonoBehaviour
     private int peteBuiltSign = 1;
     private int peteSign = 1;
 
+    // ---------- Pete's sword ----------
+    // Frames after the attack press when the sword comes out and goes away again, measured in the game
+    // (they match the attack animations' events). Index: 1 = forward, 2 = down, 3 = up.
+    private static readonly int[] AttackOn = { 0, 4, 5, 5 };
+    private static readonly int[] AttackOff = { 0, 11, 11, 12 };
+    private readonly Copy[] weaponCopies = new Copy[4];
+    private readonly bool[] weaponOn0 = new bool[4];
+    private readonly Vector3[] weaponLocal = new Vector3[4];
+    private int weaponDamage = 1;
+    private float peteScaleX0, peteScaleY0, peteScaleZ0, peteScaleX, peteScaleZ;
+    private HashSet<long> prevSword = new HashSet<long>();
+    private HashSet<long> curSword = new HashSet<long>();
+    private readonly List<Foe> killed = new List<Foe>();
+    private static readonly FieldInfo animationStateField = typeof(PlayerAnimation).GetField("animationState", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+
     private class Copy
     {
         public Collider2D Original;
@@ -151,6 +186,10 @@ public class TasPredict : MonoBehaviour
         public bool IsMirrored;
         public bool IsPete;
         public Foe Foe;
+        // Pete's sword: 1 = forward, 2 = down, 3 = up (0 = not a sword)
+        public int WeaponType;
+        // The original's object has EnemyHealth, so the sword can hurt it
+        public bool HasHealth;
         // What the game's Ground script reads when Pete touches this
         public float Friction;
         // The original has no Rigidbody2D, so the game's Ground script fails to read a friction and keeps the old one
@@ -207,6 +246,19 @@ public class TasPredict : MonoBehaviour
         public bool Pogoable;
         public float PogoSpeed;
         public float Distance;
+        // EnemyHealth and the enemy's own knockback (when Pete's sword hits it)
+        public int Health0;
+        public bool Damageable;
+        public bool IsEnemy;
+        public float InvulTime;
+        public bool Hit0;
+        public readonly List<double> HitClears0 = new List<double>();
+        public float KbVel;
+        public float KbTime;
+        public int HealthLeft;
+        public bool Hit;
+        public readonly List<double> HitClears = new List<double>();
+        public bool Dead;
         // During one prediction
         public Vector2 Pos;
         public float Z;
@@ -215,10 +267,11 @@ public class TasPredict : MonoBehaviour
         public bool Chasing;
         public int Sign;
         public bool Moved;   // a script moved it this frame, so the physics body jumps there next step
+        public bool WatchTriggers;   // close enough that its trigger zones can matter for this line
 
         public bool Moves { get { return Body != null; } }
         // Only enemies that could reach Pete in time take part, so far-off rooms cost nothing
-        public bool Simulated { get { return Alive0 && Near; } }
+        public bool Simulated { get { return Alive0 && Near && !Dead; } }
     }
 
     // Pete's script values that change from frame to frame
@@ -236,6 +289,10 @@ public class TasPredict : MonoBehaviour
         public int Hp;
         public float KbCounter;
         public readonly List<double> Clears = new List<double>();
+        // MeleeAttackManager.canAttack, and the attack animation in progress (type, frame it was pressed)
+        public bool CanAttack;
+        public int AttackType;
+        public int AttackStart;
 
         public void CopyFrom(SimPete o)
         {
@@ -250,6 +307,9 @@ public class TasPredict : MonoBehaviour
             Friction = o.Friction;
             Hp = o.Hp;
             KbCounter = o.KbCounter;
+            CanAttack = o.CanAttack;
+            AttackType = o.AttackType;
+            AttackStart = o.AttackStart;
             Clears.Clear();
             Clears.AddRange(o.Clears);
         }
@@ -349,7 +409,7 @@ public class TasPredict : MonoBehaviour
         bool live = Live(m);
         Vector2 p = m.Player.Position, v = m.Player.Velocity;
         return f + "|" + m.Restores + "|" + m.Timeline.Count + "|" + m.Movie.Length + "|" + h + "|" + p.x.ToString("R") + "," + p.y.ToString("R") + "|" + v.x.ToString("R") + "," + v.y.ToString("R")
-            + "|" + (live ? (int)TasManager.ReadPlayerInput() : -1) + "|" + Frames + ShowPath + ShowJumpChoices + ShowHits + ShowPogo + ExitsFirst + FullPrime;
+            + "|" + (live ? (int)TasManager.ReadPlayerInput() : -1) + "|" + Frames + ShowPath + PathToEnd + ShowLongJump + ShowShortJump + ShowLetGo + ShowHits + ShowAttacks + ShowKnockback + ExitsFirst + FullPrime;
     }
 
     // While recording, the line follows the keys you're holding right now
@@ -379,9 +439,17 @@ public class TasPredict : MonoBehaviour
             ReadStart(m);
             int n = Mathf.Max(1, Frames);
             bool live = Live(m);
-            Buttons[] path = PathInputs(m, n, live);
+            // "To the end of the inputs": the whole rest of the movie, then nothing held until Pete stops
+            int inputsEnd = -1;
+            int pathN = n;
+            if(PathToEnd && !live)
+            {
+                inputsEnd = Mathf.Max(0, m.Movie.Length - m.Frame);
+                pathN = Mathf.Clamp(inputsEnd + 150, n, m.CurrentMode == TasManager.Mode.Paused ? 3000 : 400);
+            }
+            Buttons[] path = PathInputs(m, pathN, live, PathToEnd);
 
-            TasPrediction green = Run(path, n, null, null, live ? "Your path (keys you're holding)" : "Your path", PathColor);
+            TasPrediction green = Run(path, pathN, null, null, live ? "Your path (keys you're holding)" : "Your path", PathColor, inputsEnd, true);
             green.Width = 3.5f;
             Path = green;
             if(ShowPath)
@@ -394,24 +462,40 @@ public class TasPredict : MonoBehaviour
             }
 
             Buttons dirs = path[1] & (Buttons.Left | Buttons.Right | Buttons.Up | Buttons.Down);
-            if(ShowJumpChoices)
+            bool holdingJump = (path[0] & Buttons.Jump) != 0;
+            if(ShowLongJump)
             {
-                AddUnlessSame(Run(Constant(path[0], dirs | Buttons.Jump, n), n, null, null, "Hold jump", HoldColor), green);
+                // Jump held from the next frame on: the highest, longest jump
+                AddUnlessSame(Run(Constant(path[0], dirs | Buttons.Jump, n), n, null, null, "Longest jump (hold jump)", HoldColor), green);
+            }
+            if(ShowShortJump && n >= 2)
+            {
+                // Jump pressed for a single frame: the lowest hop (if jump is held now, it's let go first)
+                Buttons[] tap = Constant(path[0], dirs, n);
+                tap[holdingJump ? 2 : 1] |= Buttons.Jump;
+                AddUnlessSame(Run(tap, n, null, null, "Shortest jump (tap jump)", TapColor), green);
+            }
+            if(ShowLetGo)
+            {
                 AddUnlessSame(Run(Constant(path[0], dirs, n), n, null, null, "Let go of jump", ReleaseColor), green);
             }
-            if(ShowPogo && !start.OnGround)
+            // Attack lines only when something the sword could hit is close enough to matter
+            bool inReach = false;
+            foreach(Foe f in foes)
             {
-                Foe best = null;
-                foreach(Foe f in foes)
+                if(f.Simulated && f.Health != null && f.Distance <= SwordReach)
                 {
-                    if(f.Alive0 && f.Pogoable && f.Distance <= PogoRange && (best == null || f.Distance < best.Distance))
-                    {
-                        best = f;
-                    }
+                    inReach = true;
                 }
-                if(best != null)
+            }
+            if(ShowAttacks && start.CanAttack && inReach)
+            {
+                // Attacking on the next frame (only shown when the swing hits something and changes the route)
+                AddUnlessSame(Run(AttackNow(path, n, Buttons.None), n, null, null, "Attack now", AttackColor), green);
+                AddUnlessSame(Run(AttackNow(path, n, Buttons.Up), n, null, null, "Attack up now", AttackUpColor), green);
+                if(!start.OnGround)
                 {
-                    AddUnlessSame(Run(path, n, null, best, "Pogo off the " + best.Name, PogoColor), green);
+                    AddUnlessSame(Run(AttackNow(path, n, Buttons.Down), n, null, null, "Attack down now (pogo)", AttackDownColor), green);
                 }
             }
             if(ShowHits)
@@ -535,13 +619,13 @@ public class TasPredict : MonoBehaviour
     }
 
     // inputs[0] is the current frame's input (the game needs it to tell "just pressed" from "held")
-    private static Buttons[] PathInputs(TasManager m, int n, bool live)
+    private static Buttons[] PathInputs(TasManager m, int n, bool live, bool letGoAtEnd = false)
     {
         Buttons[] a = new Buttons[n + 1];
         int f = m.Frame;
         a[0] = m.Movie.Get(f);
         Buttons keys = live ? TasManager.ReadPlayerInput() : Buttons.None;
-        Buttons last = m.Movie.Length > 0 ? m.Movie.Get(m.Movie.Length) : Buttons.None;
+        Buttons last = m.Movie.Length > 0 && !letGoAtEnd ? m.Movie.Get(m.Movie.Length) : Buttons.None;
         for(int j = 1; j <= n; j++)
         {
             if(live)
@@ -550,9 +634,28 @@ public class TasPredict : MonoBehaviour
             }
             else
             {
-                // Past the end of the movie, keep holding the last frame's buttons
+                // Past the end of the movie, keep holding the last frame's buttons (or let go)
                 a[j] = f + j <= m.Movie.Length ? m.Movie.Get(f + j) : last;
             }
+        }
+        return a;
+    }
+
+    // Your inputs, with an attack pressed on the next frame (aimed up, down or forward)
+    private static Buttons[] AttackNow(Buttons[] path, int n, Buttons aim)
+    {
+        Buttons[] a = new Buttons[n + 1];
+        Array.Copy(path, a, n + 1);
+        int at = 1;
+        if((a[0] & Buttons.Attack) != 0)
+        {
+            // Attack is held right now, so let go first and press on the frame after
+            a[1] &= ~Buttons.Attack;
+            at = 2;
+        }
+        if(at <= n)
+        {
+            a[at] = (a[at] & ~(Buttons.Up | Buttons.Down)) | aim | Buttons.Attack;
         }
         return a;
     }
@@ -684,6 +787,46 @@ public class TasPredict : MonoBehaviour
         awake0 = rb.IsAwake();
         peteZ = pete.transform.position.z;
         peteSign0 = Sign(pete.transform.localScale.x);
+        Vector3 ls = pete.transform.localScale;
+        peteScaleX0 = ls.x;
+        peteScaleY0 = ls.y;
+        peteScaleZ0 = ls.z;
+        MeleeAttackManager mam = pete.GetComponent<MeleeAttackManager>();
+        weaponDamage = mam != null ? mam.meleeDamage : 1;
+        start.CanAttack = m.Player.CanAttack;
+        start.AttackType = 0;
+        start.AttackStart = 0;
+        Animator an = pete.GetComponent<Animator>();
+        if(an != null && an.isActiveAndEnabled)
+        {
+            // Where the attack animation is (the sword comes out on set frames after the press)
+            AnimatorStateInfo st = an.GetCurrentAnimatorStateInfo(0);
+            int type = st.IsName("Pete-Attack") || st.IsName("Pete-Attack-2") ? 1 : st.IsName("Pete-Attack-Down") ? 2 : st.IsName("Pete-Attack-Up") ? 3 : 0;
+            if(type != 0)
+            {
+                int e = Mathf.RoundToInt(st.normalizedTime * st.length / TasManager.Tick) + 1;
+                if(e < AttackOff[type])
+                {
+                    start.AttackType = type;
+                    start.AttackStart = -e;
+                }
+            }
+            else
+            {
+                // Pressed on this very frame: the animation starts on the next one
+                PlayerAnimation pa = pete.GetComponent<PlayerAnimation>();
+                if(pa != null && Read<bool>(pa, "isAttacking") && animationStateField != null)
+                {
+                    string sn = animationStateField.GetValue(null).ToString();
+                    type = sn == "ATTACKUP" ? 3 : sn == "ATTACKDOWN" ? 2 : sn == "ATTACK1" || sn == "ATTACK2" ? 1 : 0;
+                    if(type != 0)
+                    {
+                        start.AttackType = type;
+                        start.AttackStart = 0;
+                    }
+                }
+            }
+        }
         int k = m.Frame;
         if(k >= 1 && k - 1 < m.Timeline.Count)
         {
@@ -706,7 +849,7 @@ public class TasPredict : MonoBehaviour
         peteBody = null;
         foreach(Copy c in peteCopies)
         {
-            if(c.Original == null || !c.Original.enabled)
+            if(c.Original == null || !c.Original.enabled || c.WeaponType != 0)
             {
                 continue;
             }
@@ -778,6 +921,22 @@ public class TasPredict : MonoBehaviour
             // A down-attack can bounce Pete off living enemies that can take a hit
             f.Pogoable = f.Health != null && f.Knock != null && Read<bool>(f.Health, "isEnemy") && Read<bool>(f.Health, "damageable") && Read<int>(f.Health, "currentHealth") > 0;
             f.PogoSpeed = f.Knock != null ? Read<float>(f.Knock, "kbVelocity") : 0f;
+            f.KbVel = f.PogoSpeed;
+            f.KbTime = f.Knock != null ? Read<float>(f.Knock, "kbTime") : 0f;
+            f.HitClears0.Clear();
+            if(f.Health != null)
+            {
+                f.Health0 = Read<int>(f.Health, "currentHealth");
+                f.Damageable = Read<bool>(f.Health, "damageable");
+                f.IsEnemy = Read<bool>(f.Health, "isEnemy");
+                f.InvulTime = Read<float>(f.Health, "invulnerabilityTime");
+                f.Hit0 = Read<bool>(f.Health, "hit");
+                List<double> hc = Read<List<double>>(f.Health, "turnOffHitTimes");
+                if(hc != null)
+                {
+                    f.HitClears0.AddRange(hc);
+                }
+            }
             // How far the enemy's (or spikes') actual shapes are from Pete's
             float d = float.MaxValue;
             foreach(Copy c in f.Copies)
@@ -807,10 +966,16 @@ public class TasPredict : MonoBehaviour
         }
         foreach(Foe f in foes)
         {
+            f.Dead = false;
             if(f.Body != null && f.Body.simulated != f.Simulated)
             {
                 f.Body.simulated = f.Simulated;
             }
+        }
+        killed.Clear();
+        for(int t = 1; t <= 3; t++)
+        {
+            weaponOn0[t] = weaponCopies[t] != null && weaponCopies[t].Col.enabled;
         }
     }
 
@@ -818,9 +983,13 @@ public class TasPredict : MonoBehaviour
     //  One prediction: the stand-in Pete plays the inputs, frame by frame
     // =====================================================================
 
-    private TasPrediction Run(Buttons[] inputs, int n, Foe hitBy, Foe pogoOff, string name, Color color)
+    // inputsEnd: the frame (from now) where the movie's inputs run out; after it, the line stops once Pete is at rest.
+    // isPath: the green line, which gets all the labels.
+    private TasPrediction Run(Buttons[] inputs, int n, Foe hitBy, Foe pogoOff, string name, Color color, int inputsEnd = -1, bool isPath = false)
     {
         TasPrediction p = new TasPrediction();
+        current = p;
+        currentIsPath = isPath;
         p.Name = name;
         p.Color = color;
         s.CopyFrom(start);
@@ -839,13 +1008,41 @@ public class TasPredict : MonoBehaviour
             f.Moved = false;
             f.Clears.Clear();
             f.Clears.AddRange(f.Clears0);
+            f.HealthLeft = f.Health0;
+            f.Hit = f.Hit0;
+            f.HitClears.Clear();
+            f.HitClears.AddRange(f.HitClears0);
+            f.WatchTriggers = f.Distance <= 8f + n * TasManager.Tick * 10f;
             if(f.Simulated)
             {
                 SetFacing(f, f.Sign);
                 PlaceFoe(f);
             }
         }
+        // Enemies the last prediction defeated come back
+        foreach(Foe f in killed)
+        {
+            f.Dead = false;
+            foreach(Copy c in f.Copies)
+            {
+                c.Col.enabled = c.Original != null && c.Original.enabled && c.Original.gameObject.activeInHierarchy && f.Simulated;
+            }
+            if(f.Simulated)
+            {
+                PlaceFoe(f);
+            }
+        }
+        killed.Clear();
+        for(int t = 1; t <= 3; t++)
+        {
+            if(weaponCopies[t] != null && weaponCopies[t].Col.enabled != weaponOn0[t])
+            {
+                weaponCopies[t].Col.enabled = weaponOn0[t];
+            }
+        }
         peteSign = peteSign0;
+        peteScaleX = peteScaleX0;
+        peteScaleZ = peteScaleZ0;
         SetPeteFacing(peteSign);
 
         // Rebuild the physics contacts the way they were on this frame: one tiny step from the frame before,
@@ -879,10 +1076,14 @@ public class TasPredict : MonoBehaviour
         }
         ReadSolidContacts(prevSolid);
         ReadTriggerContacts(prevTrig);
+        ReadSwordContacts(prevSword);
 
         p.Pos.Add(pos0);
         p.Vel.Add(vel0);
         p.Ground.Add(s.OnGround);
+        bool knocked = s.Clears.Count > 0 || !s.CanMove;
+        p.Knock.Add(knocked);
+        kbFrom = knocked ? 0 : -1;
         if(Trace)
         {
             TraceLog.Length = 0;
@@ -895,6 +1096,7 @@ public class TasPredict : MonoBehaviour
             Hurt(hitBy, 0, p);
             s.KbCounter -= udt;
             s.CanMove = !(s.KbCounter > 0);
+            p.Knock[0] = true;
             if(p.DeathAt >= 0)
             {
                 return p;
@@ -1067,9 +1269,27 @@ public class TasPredict : MonoBehaviour
             swap = prevTrig;
             prevTrig = curTrig;
             curTrig = swap;
+
+            // Pete's sword touching an enemy (MeleeWeapon.OnTriggerEnter2D)
+            ReadSwordContacts(curSword);
+            foreach(long key in curSword)
+            {
+                if(!prevSword.Contains(key))
+                {
+                    SwordHit(pairOther[key].Foe, pairMine[key].WeaponType, j, p);
+                }
+            }
+            swap = prevSword;
+            prevSword = curSword;
+            curSword = swap;
+
             if(!wasGround && s.OnGround)
             {
                 p.Landings.Add(j);
+                if(isPath && p.Landings.Count == 1)
+                {
+                    p.AddLabel(j, "lands (+" + j + " f)");
+                }
             }
 
             // ---- Update ----
@@ -1081,17 +1301,51 @@ public class TasPredict : MonoBehaviour
             }
             s.KbCounter -= udt;
             s.CanMove = !(s.KbCounter > 0);
-            // Pete turns to face where he's going, which flips his hitbox too
+            // MeleeAttackManager.CheckInput: a fresh attack press starts a swing (up, down in the air, or forward)
+            if((cur & Buttons.Attack) != 0 && (prev & Buttons.Attack) == 0 && s.CanAttack)
+            {
+                float vert = ((cur & Buttons.Up) != 0 ? 1f : 0f) - ((cur & Buttons.Down) != 0 ? 1f : 0f);
+                int type = 0;
+                if(vert > 0.5f) type = 3;
+                if(vert < -0.5f && !s.OnGround) type = 2;
+                if(vert > -0.5f && vert < 0.5f) type = 1;
+                // The same up/down animation doesn't restart; forward swings alternate between two, so they do
+                if(type != 0 && !(type == s.AttackType && type != 1))
+                {
+                    s.AttackType = type;
+                    s.AttackStart = j;
+                }
+            }
+            // Pete turns to face where he's going (FlipSprite), which flips his hitbox and sword too
             Vector2 vNow = dummy.velocity;
             if(vNow.x > 0)
             {
-                peteSign = Sign(1 * peteStandardScale);
+                peteScaleZ = peteScaleX;
+                peteScaleX = 1 * peteStandardScale;
             }
             else if(vNow.x < 0)
             {
-                peteSign = Sign(-1 * peteStandardScale);
+                peteScaleZ = peteScaleX;
+                peteScaleX = -1 * peteStandardScale;
             }
+            peteSign = Sign(peteScaleX);
             SetPeteFacing(peteSign);
+            // The attack animation's events: the sword comes out, then goes away
+            if(s.AttackType != 0)
+            {
+                int e = j - s.AttackStart;
+                if(e == AttackOn[s.AttackType])
+                {
+                    SetSword(s.AttackType, true);
+                    s.CanAttack = false;
+                }
+                if(e >= AttackOff[s.AttackType])
+                {
+                    SetSword(s.AttackType, false);
+                    s.CanAttack = true;
+                    s.AttackType = 0;
+                }
+            }
             Vector2 peteNow = dummy.position;
             foreach(Foe f in foes)
             {
@@ -1143,6 +1397,14 @@ public class TasPredict : MonoBehaviour
             }
             foreach(Foe f in foes)
             {
+                for(int i = f.HitClears.Count - 1; i >= 0; i--)
+                {
+                    if(lateTime >= f.HitClears[i])
+                    {
+                        f.HitClears.RemoveAt(i);
+                        f.Hit = false;
+                    }
+                }
                 if(!f.Simulated || !f.Moves)
                 {
                     continue;
@@ -1160,6 +1422,23 @@ public class TasPredict : MonoBehaviour
             p.Pos.Add(dummy.position);
             p.Vel.Add(dummy.velocity);
             p.Ground.Add(s.OnGround);
+            bool knockNow = s.Clears.Count > 0 || !s.CanMove;
+            p.Knock.Add(knockNow);
+            if(knocked && !knockNow)
+            {
+                p.AddLabel(j, kbFrom > 0 ? "knockback over (" + (j - kbFrom) + " f)" : "knockback over (+" + j + " f)");
+            }
+            knocked = knockNow;
+            if(isPath && j == inputsEnd && inputsEnd > 0)
+            {
+                p.AddLabel(j, "inputs end");
+            }
+            if(inputsEnd >= 0 && j > inputsEnd + 1 && s.OnGround && !knockNow && dummy.velocity.sqrMagnitude < 1e-6f)
+            {
+                // Out of inputs and standing still: this is where Pete ends up
+                p.AddLabel(j, "stops here (+" + j + " f)");
+                break;
+            }
             if(Trace && j <= 3)
             {
                 TraceStep(j);
@@ -1170,6 +1449,98 @@ public class TasPredict : MonoBehaviour
             }
         }
         return p;
+    }
+
+    private void SetSword(int type, bool on)
+    {
+        Copy c = weaponCopies[type];
+        if(c != null && c.Col.enabled != on)
+        {
+            c.Col.enabled = on;
+        }
+    }
+
+    // Which enemies the sword is touching right now
+    private void ReadSwordContacts(HashSet<long> into)
+    {
+        into.Clear();
+        for(int t = 1; t <= 3; t++)
+        {
+            Copy wc = weaponCopies[t];
+            if(wc == null || !wc.Col.enabled)
+            {
+                continue;
+            }
+            int cnt = wc.Col.GetContacts(everything, touching);
+            for(int i = 0; i < cnt; i++)
+            {
+                Collider2D o = touching[i];
+                Copy oc;
+                if(o == null || o.isTrigger || !byId.TryGetValue(o.GetInstanceID(), out oc) || oc.Foe == null || !oc.HasHealth || oc.Foe.Health == null)
+                {
+                    continue;
+                }
+                long key = PairKey(wc.Col, o);
+                into.Add(key);
+                pairMine[key] = wc;
+                pairOther[key] = oc;
+            }
+        }
+    }
+
+    // Where the sword's object is (its knockback pushes enemies away from this point)
+    private Vector3 SwordPosition(int type)
+    {
+        Vector2 here = dummy.position;
+        Vector3 l = weaponLocal[type];
+        return new Vector3(here.x + l.x * peteScaleX, here.y + l.y * peteScaleY0, peteZ + l.z * peteScaleZ);
+    }
+
+    // EnemyHealth.doDamage, as the game does it
+    private void SwordHit(Foe f, int type, int j, TasPrediction p)
+    {
+        if(f == null || f.Dead || !f.Damageable || f.Hit || f.HealthLeft <= 0)
+        {
+            return;
+        }
+        f.Hit = true;
+        f.HealthLeft -= weaponDamage;
+        double now = frameTime0 + j * tickTime - physicsOffset;
+        if(f.HealthLeft <= 0)
+        {
+            // Defeated: it stops, and its hitboxes switch off
+            f.Dead = true;
+            killed.Add(f);
+            foreach(Copy c in f.Copies)
+            {
+                c.Col.enabled = false;
+            }
+            if(f.Body != null)
+            {
+                f.Body.velocity = Vector2.zero;
+            }
+            p.AddLabel(j, "defeats the " + f.Name);
+            return;
+        }
+        f.HitClears.Add(now + f.InvulTime);
+        if(!f.IsEnemy)
+        {
+            return;
+        }
+        if(type == 2)
+        {
+            // KnockbackTrigger.ReverseKnockback: the down-swing bounces Pete up
+            Vector2 v = dummy.velocity;
+            dummy.velocity = new Vector3(v.x, f.KbVel, 0);
+            p.AddLabel(j, "pogo off the " + f.Name);
+        }
+        else if(f.Body != null)
+        {
+            Vector3 kbDir = new Vector3(f.Pos.x, f.Pos.y, f.Z) - SwordPosition(type);
+            f.Body.velocity = kbDir.normalized * f.KbVel;
+            f.Clears.Add(now + f.KbTime);
+            p.AddLabel(j, "hits the " + f.Name);
+        }
     }
 
     private static void PlaceFoe(Foe f)
@@ -1204,6 +1575,10 @@ public class TasPredict : MonoBehaviour
         }
     }
 
+    private TasPrediction current;
+    private bool currentIsPath;
+    private int kbFrom = -1;
+
     // PlayerHealth.PlayerDamage + KnockbackTrigger.Knockback, as the game does them
     private void Hurt(Foe f, int j, TasPrediction p)
     {
@@ -1219,6 +1594,11 @@ public class TasPredict : MonoBehaviour
         s.Clears.Add(frameTime0 + j * tickTime - physicsOffset + kbTimeTrigger);
         f.Cooldown = f.AttackDelay;
         p.Hits.Add(j);
+        kbFrom = j;
+        if(j > 0)
+        {
+            p.AddLabel(j, "HIT -" + f.Damage + " HP");
+        }
         if(Trace)
         {
             TraceLog.Append("    hit by " + f.Name + " at +" + j + ": pete " + here.ToString("F4") + " z " + peteZ.ToString("F3") + ", " + f.Name + " " + f.Pos.ToString("F4") + " z " + f.Z.ToString("F3") + " -> vel " + dummy.velocity.ToString("F4") + "\n");
@@ -1226,6 +1606,7 @@ public class TasPredict : MonoBehaviour
         if(s.Hp <= 0 && p.DeathAt < 0)
         {
             p.DeathAt = j;
+            p.AddLabel(j, "dies");
         }
     }
 
@@ -1285,8 +1666,13 @@ public class TasPredict : MonoBehaviour
         into.Clear();
         foreach(Foe f in foes)
         {
-            // Only walking enemies (turn around / hurt) and chasers that haven't noticed Pete yet care about triggers
+            // Only walking enemies (turn around / hurt) and chasers that haven't noticed Pete yet care about triggers,
+            // and only near the stand-in (far off, turning around can't matter before the line ends)
             if(!f.Simulated || (f.Walker == null && (f.Chaser == null || f.Chasing)))
+            {
+                continue;
+            }
+            if(!f.WatchTriggers)
             {
                 continue;
             }
@@ -1366,6 +1752,38 @@ public class TasPredict : MonoBehaviour
         }
 
         levelHost = NewObject("[TAS] Prediction level");
+
+        // Pete's three sword hitboxes (switched off until a swing). They're usually off in the game, so they're
+        // copied from their box sizes rather than from the physics shapes.
+        MeleeAttackManager mam = pete.GetComponent<MeleeAttackManager>();
+        if(mam != null)
+        {
+            string[] fields = { null, "meleeWeapon", "meleeWeaponDown", "meleeWeaponUp" };
+            for(int t = 1; t <= 3; t++)
+            {
+                weaponCopies[t] = null;
+                GameObject w = Read<GameObject>(mam, fields[t]);
+                BoxCollider2D bc = w != null ? w.GetComponent<BoxCollider2D>() : null;
+                if(bc == null)
+                {
+                    continue;
+                }
+                weaponLocal[t] = w.transform.localPosition;
+                PhysicsShapeGroup2D g = new PhysicsShapeGroup2D();
+                Vector2 h = bc.size * 0.5f;
+                List<Vector2> corners = new List<Vector2>();
+                foreach(Vector2 c in new[] { new Vector2(-h.x, -h.y), new Vector2(h.x, -h.y), new Vector2(h.x, h.y), new Vector2(-h.x, h.y) })
+                {
+                    corners.Add((Vector2)w.transform.TransformPoint(bc.offset + c) - real.position);
+                }
+                g.AddPolygon(corners);
+                Copy wc = AddCopyFromShapes(bc, d, g, w.CompareTag("Player"), null);
+                wc.WeaponType = t;
+                wc.Col.enabled = false;
+                weaponCopies[t] = wc;
+                peteCopies.Add(wc);
+            }
+        }
 
         // Enemies: a body each, of the same kind as the real one (so Pete shoves them like in the game).
         // Spikes that never move go into the level.
@@ -1485,6 +1903,11 @@ public class TasPredict : MonoBehaviour
             waiting.Add(w);
             return null;
         }
+        return AddCopyFromShapes(original, host, shapes, isPete, foe);
+    }
+
+    private Copy AddCopyFromShapes(Collider2D original, GameObject host, PhysicsShapeGroup2D shapes, bool isPete, Foe foe)
+    {
         CustomCollider2D cc = host.AddComponent<CustomCollider2D>();
         cc.isTrigger = original.isTrigger;
         Rigidbody2D orb = original.attachedRigidbody != null ? original.attachedRigidbody : original.GetComponentInParent<Rigidbody2D>();
@@ -1497,6 +1920,7 @@ public class TasPredict : MonoBehaviour
         copy.Mirrored = Mirror(shapes);
         copy.IsPete = isPete;
         copy.Foe = foe;
+        copy.HasHealth = original.GetComponent<EnemyHealth>() != null;
         copy.FrictionFails = orb == null;
         copy.Friction = orb != null && orb.sharedMaterial != null ? orb.sharedMaterial.friction : 0f;
         allCopies.Add(copy);

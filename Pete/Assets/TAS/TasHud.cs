@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -21,7 +22,7 @@ public class TasHud : MonoBehaviour
     // Screen areas covered by the HUD (in real pixels, y from the top), so clicks there don't reach the level
     private readonly List<Rect> uiRects = new List<Rect>();
 
-    private GUIStyle box, label, small, bold, big, rowLabel, cell, cellOn, button, tabButton, toggle, msg, field, header;
+    private GUIStyle box, label, small, bold, big, rowLabel, cell, cellOn, button, tabButton, toggle, msg, field, header, tag;
     private Texture2D white;
     private Texture2D dark;
     private Material glMat;
@@ -113,12 +114,80 @@ public class TasHud : MonoBehaviour
     //  Keyboard shortcuts
     // =====================================================================
 
+    // ---------- The still picture ----------
+    // Every normal frame, the finished screen (level and panels) is copied. While the TAS goes back, reloads or
+    // searches, it replays at full speed with the level hidden, and that copy is shown instead of an empty screen.
+    private RenderTexture lastScreen;
+    private bool lastScreenValid;
+    private float busySince;
+    private bool wasBusy;
+    public static bool StillFlipped;
+
+    public bool ShowingStill
+    {
+        get { return M != null && M.FastMode && lastScreenValid && lastScreen != null && lastScreen.width == Screen.width && lastScreen.height == Screen.height; }
+    }
+
+    private IEnumerator Start()
+    {
+        // The screen copy comes out upside down on Direct3D (where texture rows start at the top)
+        StillFlipped = SystemInfo.graphicsUVStartsAtTop;
+        WaitForEndOfFrame end = new WaitForEndOfFrame();
+        while(true)
+        {
+            yield return end;
+            CaptureScreen();
+        }
+    }
+
+    private void TrackBusy()
+    {
+        if(M.Busy && !wasBusy)
+        {
+            busySince = Time.unscaledTime;
+        }
+        wasBusy = M.Busy;
+    }
+
+    private void CaptureScreen()
+    {
+        if(M == null || M.FastMode || Application.isBatchMode || M.CurrentMode == TasManager.Mode.Video || M.CurrentMode == TasManager.Mode.VideoEndScreen)
+        {
+            return;
+        }
+        if(M.Player == null || !M.Player.Valid || Screen.width < 8 || Screen.height < 8)
+        {
+            return;
+        }
+        try
+        {
+            if(lastScreen == null || lastScreen.width != Screen.width || lastScreen.height != Screen.height)
+            {
+                if(lastScreen != null)
+                {
+                    lastScreen.Release();
+                    Destroy(lastScreen);
+                }
+                lastScreen = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGB32);
+                lastScreen.hideFlags = HideFlags.HideAndDontSave;
+            }
+            ScreenCapture.CaptureScreenshotIntoRenderTexture(lastScreen);
+            lastScreenValid = true;
+        }
+        catch(Exception ex)
+        {
+            lastScreenValid = false;
+            Debug.LogWarning("[TAS] Could not keep a copy of the screen: " + ex.Message);
+        }
+    }
+
     private void Update()
     {
         if(M == null)
         {
             return;
         }
+        TrackBusy();
         if(GUIUtility.keyboardControl != 0)
         {
             // Typing in a text box
@@ -158,11 +227,13 @@ public class TasHud : MonoBehaviour
         }
         if(Input.GetKeyDown(KeyCode.P)) M.TogglePlay();
         if(Input.GetKeyDown(KeyCode.Q)) ToggleRecord();
-        if(Input.GetKeyDown(KeyCode.V)) M.Verify();
+        if(!ctrl && Input.GetKeyDown(KeyCode.V)) M.Verify();
         if(Input.GetKeyDown(KeyCode.Home)) M.Seek(0);
         if(Input.GetKeyDown(KeyCode.End)) M.Seek(M.Movie.Length);
         if(ctrl && Input.GetKeyDown(KeyCode.S)) M.SaveMovie(M.MovieName);
         if(ctrl && Input.GetKeyDown(KeyCode.O)) { tab = Tab.Movie; Hidden = false; }
+        if(ctrl && Input.GetKeyDown(KeyCode.Z)) { if(shift) M.Redo(); else M.Undo(); }
+        if(ctrl && Input.GetKeyDown(KeyCode.Y)) M.Redo();
         if(ctrl && Input.GetKeyDown(KeyCode.C)) CopySelection();
         if(ctrl && Input.GetKeyDown(KeyCode.V)) PasteInputs(M.Clipboard, "the copied frames");
         if(Input.GetKeyDown(KeyCode.Delete)) DeleteSelectionOrFrames();
@@ -348,12 +419,20 @@ public class TasHud : MonoBehaviour
             return;
         }
         GUILayout.BeginHorizontal();
-        TasPredict.ShowPath = ColorToggle(TasPredict.ShowPath, TasPredict.PathColor, "Your path");
-        TasPredict.ShowJumpChoices = ColorToggle(TasPredict.ShowJumpChoices, TasPredict.HoldColor, "Hold", TasPredict.ReleaseColor, "/ let go of jump");
+        TasPredict.ShowPath = ColorToggle(TasPredict.ShowPath, TasPredict.PathColor, "Your path", 110);
+        TasPredict.PathToEnd = GUILayout.Toggle(TasPredict.PathToEnd, new GUIContent(" ...to where inputs end", "Follow the whole movie, then let go and show where Pete stops"), toggle);
         GUILayout.EndHorizontal();
         GUILayout.BeginHorizontal();
+        TasPredict.ShowLongJump = ColorToggle(TasPredict.ShowLongJump, TasPredict.HoldColor, "Longest jump", 140);
+        TasPredict.ShowShortJump = ColorToggle(TasPredict.ShowShortJump, TasPredict.TapColor, "Shortest jump");
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
+        TasPredict.ShowLetGo = ColorToggle(TasPredict.ShowLetGo, TasPredict.ReleaseColor, "Let go of jump", 140);
         TasPredict.ShowHits = ColorToggle(TasPredict.ShowHits, TasPredict.HitColor, "If an enemy hits you");
-        TasPredict.ShowPogo = ColorToggle(TasPredict.ShowPogo, TasPredict.PogoColor, "Pogo bounce");
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
+        TasPredict.ShowAttacks = ColorToggle(TasPredict.ShowAttacks, TasPredict.PogoColor, "Attacks", 140);
+        TasPredict.ShowKnockback = ColorToggle(TasPredict.ShowKnockback, new Color(1f, 0.15f, 0.15f), "Knockback & labels");
         GUILayout.EndHorizontal();
         TasPredict pr = TasPredict.I;
         if(pr != null)
@@ -376,18 +455,65 @@ public class TasHud : MonoBehaviour
         }
     }
 
-    private bool ColorToggle(bool on, Color c, string text, Color c2 = default(Color), string text2 = null)
+    private bool ColorToggle(bool on, Color c, string text, float width = 0f)
     {
         Color old = GUI.color;
         GUI.color = c;
         GUILayout.Label("■", label, GUILayout.Width(12));
-        if(text2 != null)
+        GUI.color = old;
+        return width > 0f ? GUILayout.Toggle(on, " " + text, toggle, GUILayout.Width(width)) : GUILayout.Toggle(on, " " + text, toggle);
+    }
+
+    // Text next to the prediction lines ("HIT", "knockback over (10 f)", "lands", "stops here")
+    private readonly List<Rect> placedTags = new List<Rect>();
+
+    private void DrawPredictionLabels()
+    {
+        TasPredict pr = TasPredict.I;
+        if(pr == null || !TasPredict.ShowKnockback || !TasPredict.Active(M) || M.Busy || Event.current.type != EventType.Repaint)
         {
-            GUI.color = c2;
-            GUILayout.Label("■", label, GUILayout.Width(12));
+            return;
+        }
+        Camera cam = Camera.main;
+        if(cam == null)
+        {
+            return;
+        }
+        placedTags.Clear();
+        Color old = GUI.color;
+        foreach(TasPrediction p in pr.Lines)
+        {
+            foreach(KeyValuePair<int, string> l in p.Labels)
+            {
+                if(l.Key < 0 || l.Key >= p.Pos.Count)
+                {
+                    continue;
+                }
+                Vector3 sp = cam.WorldToScreenPoint(new Vector3(p.Pos[l.Key].x, p.Pos[l.Key].y, 0f));
+                Vector2 at = new Vector2(sp.x / scale, (Screen.height - sp.y) / scale);
+                GUIContent content = new GUIContent(l.Value);
+                Vector2 size = tag.CalcSize(content);
+                Rect r = new Rect(at.x - size.x * 0.5f - 3f, at.y - size.y - 16f, size.x + 6f, size.y);
+                // Don't stack labels on top of each other
+                for(int tries = 0; tries < 6; tries++)
+                {
+                    bool clash = false;
+                    foreach(Rect o in placedTags)
+                    {
+                        if(o.Overlaps(r)) { clash = true; break; }
+                    }
+                    if(!clash) break;
+                    r.y -= size.y + 2f;
+                }
+                placedTags.Add(r);
+                GUI.color = new Color(0f, 0f, 0f, 0.72f);
+                GUI.DrawTexture(r, Texture2D.whiteTexture);
+                GUI.color = old;
+                tag.normal.textColor = p.Color;
+                GUI.Label(r, content, tag);
+            }
         }
         GUI.color = old;
-        return GUILayout.Toggle(on, " " + text + (text2 != null ? " " + text2 : ""), toggle);
     }
 
     private void HitboxLegend()
@@ -466,6 +592,7 @@ public class TasHud : MonoBehaviour
         toggle.onNormal.textColor = label.normal.textColor;
         msg = new GUIStyle(label) { fontSize = 14, wordWrap = true, alignment = TextAnchor.MiddleCenter };
         field = new GUIStyle(GUI.skin.textField) { fontSize = 12 };
+        tag = new GUIStyle(GUI.skin.label) { fontSize = 11, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, padding = new RectOffset(2, 2, 1, 1) };
 
         Shader shader = Shader.Find("Hidden/Internal-Colored");
         glMat = new Material(shader);
@@ -485,6 +612,12 @@ public class TasHud : MonoBehaviour
             return;
         }
         MakeStyles();
+        if(ShowingStill && Event.current.type == EventType.Repaint)
+        {
+            // While the TAS replays at full speed with the level hidden, keep showing the screen as it was
+            GUI.matrix = Matrix4x4.identity;
+            GUI.DrawTextureWithTexCoords(new Rect(0, 0, Screen.width, Screen.height), lastScreen, StillFlipped ? new Rect(0, 1, 1, -1) : new Rect(0, 0, 1, 1), false);
+        }
         scale = Mathf.Clamp(Screen.height / RefHeight, 0.7f, 2.5f);
         vw = Screen.width / scale;
         vh = Screen.height / scale;
@@ -493,15 +626,21 @@ public class TasHud : MonoBehaviour
         {
             uiRects.Clear();
         }
+        DrawPredictionLabels();
 
         if(M.CurrentMode == TasManager.Mode.Video || M.CurrentMode == TasManager.Mode.VideoEndScreen)
         {
             DrawVideoOverlay();
             return;
         }
+        TrackBusy();
         if(M.Busy)
         {
-            DrawBusy();
+            // Quick jumps (like stepping back) just keep the still picture up; longer ones show progress
+            if(!ShowingStill || Time.unscaledTime - busySince > 0.35f)
+            {
+                DrawBusy();
+            }
             return;
         }
         if(Hidden)
@@ -516,8 +655,8 @@ public class TasHud : MonoBehaviour
         }
 
         float leftW = 336f;
-        DrawStatus(new Rect(8, 8, leftW, 372));
-        DrawTabs(new Rect(8, 388, leftW, vh - 396));
+        DrawStatus(new Rect(8, 8, leftW, 398));
+        DrawTabs(new Rect(8, 414, leftW, vh - 422));
         float rollW = 292f;
         DrawRoll(new Rect(vw - rollW - 8, 8, rollW, vh - 16));
         float gx = leftW + 16;
@@ -594,6 +733,14 @@ public class TasHud : MonoBehaviour
             m.SpeedPercent = m.SpeedPercent == 100 ? 50 : m.SpeedPercent == 50 ? 25 : 100;
         }
         if(GUILayout.Button(new GUIContent("Verify (V)", "Replay from the start to check every frame is exact"), button)) m.Verify();
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal();
+        GUI.enabled = m.UndoCount > 0;
+        if(GUILayout.Button("Undo  (Ctrl+Z)", button, GUILayout.Width(146))) m.Undo();
+        GUI.enabled = m.RedoCount > 0;
+        if(GUILayout.Button("Redo  (Ctrl+Y)", button)) m.Redo();
+        GUI.enabled = true;
         GUILayout.EndHorizontal();
 
         GUILayout.Space(6);
@@ -855,9 +1002,9 @@ public class TasHud : MonoBehaviour
         if(GUI.Button(new Rect(r.x + 17 + bw * 3, by + 18, bw, 22), new GUIContent("Unselect", "Clear the selection (Esc)"), button)) ClearSelection();
 
         GUI.Label(new Rect(r.x + 8, by + 44, r.width - 16, 18), "Move everything from frame " + editFrame + " on:", small);
-        if(GUI.Button(new Rect(r.x + 8, by + 62, 22, 22), "-", button)) shiftCount = Mathf.Max(1, shiftCount - (Event.current.shift ? 10 : 1));
-        GUI.Label(new Rect(r.x + 32, by + 64, 36, 20), shiftCount.ToString(), label);
-        if(GUI.Button(new Rect(r.x + 62, by + 62, 22, 22), "+", button)) shiftCount = Mathf.Min(9999, shiftCount + (Event.current.shift ? 10 : 1));
+        if(GUI.Button(new Rect(r.x + 8, by + 62, 22, 22), "-", button)) SetShiftCount(shiftCount - (Event.current.shift ? 10 : 1));
+        ShiftCountField(new Rect(r.x + 32, by + 63, 28, 20));
+        if(GUI.Button(new Rect(r.x + 62, by + 62, 22, 22), "+", button)) SetShiftCount(shiftCount + (Event.current.shift ? 10 : 1));
         if(GUI.Button(new Rect(r.x + 90, by + 62, 94, 22), new GUIContent("Later +" + shiftCount, "Insert " + shiftCount + " empty frames here, pushing everything after later"), button))
         {
             List<Buttons> blank = new List<Buttons>();
@@ -884,6 +1031,40 @@ public class TasHud : MonoBehaviour
         {
             m.SetMarker(m.Frame, markerText.Trim());
             GUIUtility.keyboardControl = 0;
+        }
+    }
+
+    private string shiftText = "1";
+
+    private void SetShiftCount(int n)
+    {
+        shiftCount = Mathf.Clamp(n, 1, 9999);
+        shiftText = shiftCount.ToString();
+    }
+
+    // A box you can type the number of frames into (Enter or Esc to finish)
+    private void ShiftCountField(Rect r)
+    {
+        GUI.SetNextControlName("ShiftCount");
+        string typed = GUI.TextField(r, shiftText, 4, field);
+        if(typed != shiftText)
+        {
+            string digits = "";
+            foreach(char c in typed)
+            {
+                if(c >= '0' && c <= '9') digits += c;
+            }
+            shiftText = digits;
+            int n;
+            if(int.TryParse(digits, out n) && n >= 1)
+            {
+                shiftCount = Mathf.Min(9999, n);
+            }
+        }
+        if(GUI.GetNameOfFocusedControl() != "ShiftCount" && shiftText != shiftCount.ToString())
+        {
+            // Left empty (or 0): go back to the number in use
+            shiftText = shiftCount.ToString();
         }
     }
 
@@ -1505,6 +1686,7 @@ public class TasHud : MonoBehaviour
         HelpRow("T", "show / hide prediction lines");
         HelpRow("C", "center the camera on Pete");
         HelpRow("Shift + click", "select frames (click frame numbers)");
+        HelpRow("Ctrl + Z / Y", "undo / redo");
         HelpRow("Ctrl + C / V", "copy / paste frames");
         HelpRow("Delete", "delete the selected frames");
         HelpRow("G / L", "view tab / lines tab");

@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using Buttons = PeteInput.Buttons;
@@ -9,6 +10,18 @@ public class TasVisualTest : MonoBehaviour
     private TasManager M { get { return TasManager.I; } }
     private string folder;
     private int shot;
+
+    // Steps back from inside OnGUI, the same way clicking the "<" button does
+    private bool stepBackFromGui;
+
+    private void OnGUI()
+    {
+        if(stepBackFromGui && Event.current.type == EventType.Layout)
+        {
+            stepBackFromGui = false;
+            M.StepBack(1);
+        }
+    }
 
     private IEnumerator WaitIdle()
     {
@@ -100,6 +113,20 @@ public class TasVisualTest : MonoBehaviour
         TasDraw.ShowLevelCollision = false;
         TasDraw.ShowHitboxes = false;
 
+        // Stepping back keeps the level on screen (a still picture) instead of flashing an empty screen
+        M.Seek(60);
+        yield return WaitIdle();
+        yield return Shot("before-stepping-back");
+        stepBackFromGui = true;
+        while(stepBackFromGui) yield return null;
+        bool wasSeeking = M.CurrentMode == TasManager.Mode.Seeking;
+        bool stillPicture = TasHud.I.ShowingStill;
+        yield return new WaitForEndOfFrame();
+        shot++;
+        ScreenCapture.CaptureScreenshot(Path.Combine(folder, shot.ToString("00") + "-while-stepping-back.png"));
+        yield return WaitIdle();
+        string freezeInfo = "seeking " + wasSeeking + ", still picture " + stillPicture + ", back on frame " + M.Frame;
+
         // Prediction lines: on the ground just before the first jump, and in the air
         TasPredict.Show = true;
         TasHud.I.ShowTab("Ghosts");
@@ -109,6 +136,20 @@ public class TasVisualTest : MonoBehaviour
         M.Seek(33);
         yield return WaitIdle();
         yield return Shot("prediction-air");
+        // The green line followed to where the movie's inputs end, then letting go until Pete stops
+        TasPredict.PathToEnd = true;
+        M.Seek(120);
+        yield return WaitIdle();
+        if(TasFreeCam.I != null && !TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
+        yield return Shot("prediction-to-end");
+        string toEndInfo = "no green line";
+        if(TasPredict.I != null && TasPredict.I.Path != null)
+        {
+            toEndInfo = TasPredict.I.Path.Pos.Count + " points, labels:";
+            foreach(KeyValuePair<int, string> l in TasPredict.I.Path.Labels) toEndInfo += " [" + l.Value + " @" + l.Key + "]";
+        }
+        if(TasFreeCam.I != null && TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
+        TasPredict.PathToEnd = false;
         string predictInfo = TasPredict.I != null ? TasPredict.I.Lines.Count + " lines, " + TasPredict.I.LastMs.ToString("0.0") + " ms, error " + TasPredict.I.PathError.ToString("0.0000") + (TasPredict.I.Problem.Length > 0 ? ", problem " + TasPredict.I.Problem : "") : "none";
         M.Seek(120);
         yield return WaitIdle();
@@ -172,11 +213,11 @@ public class TasVisualTest : MonoBehaviour
             foreach(TasPrediction line2 in TasPredict.I.Lines)
             {
                 if(line2.Color == TasPredict.HitColor) hasHit = true;
-                if(line2.Color == TasPredict.PogoColor) hasPogo = true;
+                if(line2.Color == TasPredict.AttackColor || line2.Color == TasPredict.AttackUpColor || line2.Color == TasPredict.AttackDownColor) hasPogo = true;
             }
             if((hasHit && !shotHit) || (hasPogo && !shotPogo))
             {
-                string kind = hasPogo && !shotPogo ? "pogo" : "enemy";
+                string kind = hasPogo && !shotPogo ? "attack" : "enemy";
                 yield return Shot("prediction-" + kind);
                 enemyInfo += " " + kind + " at frame " + f + " (" + TasPredict.I.Lines.Count + " lines, " + TasPredict.I.LastMs.ToString("0.0") + " ms);";
                 if(hasHit) shotHit = true;
@@ -186,7 +227,7 @@ public class TasVisualTest : MonoBehaviour
         if(TasFreeCam.I != null && TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
         predictInfo += " |" + (enemyInfo.Length > 0 ? enemyInfo : " no enemy lines found");
 
-        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors + " | " + exportInfo + " | predictions " + predictInfo);
+        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors + " | " + exportInfo + " | predictions " + predictInfo + " | step back: " + freezeInfo + " | to end: " + toEndInfo);
         Application.Quit(0);
     }
 }

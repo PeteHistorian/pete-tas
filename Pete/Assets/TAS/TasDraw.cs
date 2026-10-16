@@ -264,6 +264,18 @@ public class TasDraw : MonoBehaviour
         {
             TasPrediction p = pr.Lines[li];
             int n = p.Pos.Count;
+            if(TasPredict.ShowKnockback)
+            {
+                // Knockback: a wide red band under that part of the line
+                Color band = new Color(1f, 0.15f, 0.15f, 0.45f);
+                for(int i = 1; i < n && i < p.Knock.Count; i++)
+                {
+                    if(p.Knock[i])
+                    {
+                        Seg(p.Pos[i - 1], p.Pos[i], p.Width + 8f, band, z);
+                    }
+                }
+            }
             for(int i = 1; i < n; i++)
             {
                 Color c = p.Color;
@@ -294,7 +306,8 @@ public class TasDraw : MonoBehaviour
             {
                 if(i < n)
                 {
-                    Cross(p.Pos[i], 7f, TasPredict.HitColor, z);
+                    Dot(p.Pos[i], 14f, new Color(1f, 0.15f, 0.15f, 0.9f), z);
+                    Cross(p.Pos[i], 5f, Color.white, z);
                 }
             }
             if(p.DeathAt >= 0 && p.DeathAt < n)

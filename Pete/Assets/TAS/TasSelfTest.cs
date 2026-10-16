@@ -51,6 +51,17 @@ public class TasSelfTest : MonoBehaviour
         float t0 = Time.realtimeSinceStartup;
         Log("Pete TAS self-test  " + DateTime.Now);
         yield return WaitIdle();
+        if(TasManager.HasArg("-tasProbeAttacks"))
+        {
+            yield return ProbeAttacks();
+            yield break;
+        }
+        string checkMovie = ArgAfter("-tasCheckMovie");
+        if(checkMovie != null)
+        {
+            yield return CheckMovie(checkMovie);
+            yield break;
+        }
         Check(M.Player != null && M.Player.Valid, "Level loaded and Pete found");
         Log("Saved objects: " + M.Registry.EntryCount + ", clock offset " + (M.ClockOffsetAfterBoot * 1000).ToString("0.000") + " ms");
         int frames = 1500;
@@ -288,6 +299,42 @@ public class TasSelfTest : MonoBehaviour
             yield return WaitIdle();
         }
 
+        // 3e. Undo and redo put the movie, and where Pete ends up, back exactly
+        {
+            int at = Mathf.Min(250, last - 1);
+            M.Seek(at);
+            yield return WaitIdle();
+            TasMovie original = M.Movie.Clone();
+            ulong originalPrint = M.Timeline[at].Fingerprint;
+            int undoBefore = M.UndoCount;
+            M.SetInput(at - 30, M.Movie.Get(at - 30) ^ Buttons.Jump);
+            yield return WaitIdle();
+            M.InsertFrames(at - 20, new List<Buttons> { Buttons.Right, Buttons.Right, Buttons.Right });
+            yield return WaitIdle();
+            TasMovie edited = M.Movie.Clone();
+            ulong editedPrint = M.Timeline[at].Fingerprint;
+            M.Undo();
+            yield return WaitIdle();
+            M.Undo();
+            yield return WaitIdle();
+            bool undone = M.Movie.SameInputs(original) && M.Frame == at && M.Timeline.Count > at && M.Timeline[at].Fingerprint == originalPrint;
+            Check(undone, "Undo twice puts back the inputs and Pete's exact result on frame " + at + " (same inputs " + M.Movie.SameInputs(original) + ", frame " + M.Frame + ")");
+            M.Redo();
+            yield return WaitIdle();
+            M.Redo();
+            yield return WaitIdle();
+            bool redone = M.Movie.SameInputs(edited) && M.Frame == at && M.Timeline.Count > at && M.Timeline[at].Fingerprint == editedPrint;
+            Check(redone && M.UndoCount == undoBefore + 2 && M.RedoCount == 0, "Redo twice brings both changes back exactly (undo steps " + (M.UndoCount - undoBefore) + ", redo steps left " + M.RedoCount + ")");
+            M.Verify();
+            yield return WaitIdle();
+            Check(M.DesyncFrame < 0, "After undo and redo, an exact replay agrees with what the tool showed (desync " + M.DesyncFrame + ")");
+            M.Undo();
+            yield return WaitIdle();
+            M.Undo();
+            yield return WaitIdle();
+            Check(M.Movie.SameInputs(original), "Undoing again leaves the original movie");
+        }
+
         // 4. Movie text format round trip
         string text = movie.ToText();
         TasMovie back = TasMovie.FromText(text);
@@ -399,6 +446,108 @@ public class TasSelfTest : MonoBehaviour
 #else
         Application.Quit(failed ? 1 : 0);
 #endif
+    }
+
+    private static string ArgAfter(string name)
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        for(int i = 0; i < args.Length - 1; i++)
+        {
+            if(string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+            {
+                return args[i + 1];
+            }
+        }
+        return null;
+    }
+
+    private void Finish(string file)
+    {
+        try
+        {
+            File.WriteAllText(Path.Combine(TasManager.TasFolder, file), report.ToString());
+        }
+        catch(Exception ex)
+        {
+            Debug.LogError(ex);
+        }
+        Application.Quit(0);
+    }
+
+    // Records, frame by frame, when the sword is out after each kind of attack press (for the prediction lines)
+    private IEnumerator ProbeAttacks()
+    {
+        TasMovie mv = new TasMovie();
+        for(int f = 1; f <= 120; f++) mv.Set(f, Buttons.None);
+        mv.Set(10, Buttons.Attack);
+        mv.Set(40, Buttons.Up | Buttons.Attack);
+        for(int f = 70; f < 82; f++) mv.Set(f, Buttons.Jump);
+        mv.Set(76, Buttons.Down | Buttons.Attack | Buttons.Jump);
+        mv.Set(100, Buttons.Attack);
+        mv.Set(101, Buttons.Attack);
+        M.ReplaceMovie(mv, "attack-probe", 0);
+        yield return WaitIdle();
+        GameObject pete = M.Player.Go;
+        MeleeAttackManager mam = pete.GetComponent<MeleeAttackManager>();
+        System.Reflection.BindingFlags any = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+        GameObject side = (GameObject)typeof(MeleeAttackManager).GetField("meleeWeapon", any).GetValue(mam);
+        GameObject down = (GameObject)typeof(MeleeAttackManager).GetField("meleeWeaponDown", any).GetValue(mam);
+        GameObject up = (GameObject)typeof(MeleeAttackManager).GetField("meleeWeaponUp", any).GetValue(mam);
+        Animator an = pete.GetComponent<Animator>();
+        string[] states = { "Pete-Attack", "Pete-Attack-2", "Pete-Attack-Down", "Pete-Attack-Up", "Pete-Idle 0", "Pete-Running 0", "Pete-Jumping 0", "Pete-Falling 0", "Pete-Up", "Pete-Down" };
+        Log("frame input | sword side/down/up | canAttack | animator state, time | ground");
+        for(int f = 1; f <= 120; f++)
+        {
+            M.StepForward(1);
+            yield return WaitIdle();
+            AnimatorStateInfo st = an.GetCurrentAnimatorStateInfo(0);
+            string state = "?";
+            foreach(string sname in states)
+            {
+                if(st.IsName(sname)) state = sname;
+            }
+            Log(f + " " + TasMovie.ButtonsToShortText(M.Movie.Get(f)) + " | " + (side.activeSelf ? "S" : "-") + (down.activeSelf ? "D" : "-") + (up.activeSelf ? "U" : "-")
+                + " | " + M.Player.CanAttack + " | " + state + " " + (st.normalizedTime * st.length).ToString("0.000") + " | " + M.Player.OnGround);
+        }
+        Log("side weapon local " + side.transform.localPosition.ToString("F4") + " down " + down.transform.localPosition.ToString("F4") + " up " + up.transform.localPosition.ToString("F4") + ", pete scale " + pete.transform.localScale.ToString("F3"));
+        Finish("attack-probe.txt");
+    }
+
+    // Loads a movie, makes a clean run of it, then goes back one frame at a time (like holding B) and
+    // reports every rewind that comes out different
+    private IEnumerator CheckMovie(string name)
+    {
+        if(TasManager.HasArg("-noPredict"))
+        {
+            TasPredict.Show = false;
+            Log("Prediction lines switched off for this check");
+        }
+        M.LoadMovie(name);
+        yield return WaitIdle();
+        M.Seek(M.Movie.Length);
+        yield return WaitIdle();
+        M.Verify();
+        yield return WaitIdle();
+        int last = M.Frame;
+        Log("Clean run of " + name + " to frame " + last + " (movie " + M.Movie.Length + " frames), death " + M.DeathFrame + ", desync " + M.DesyncFrame);
+        M.DesyncFrame = -1;
+        int bad = 0;
+        for(int k = last - 1; k >= 1; k--)
+        {
+            M.Seek(k);
+            yield return WaitIdle();
+            if(M.DesyncFrame >= 0)
+            {
+                bad++;
+                Log("Going back to " + k + ": frame " + M.DesyncFrame + " came out different");
+                M.DesyncFrame = -1;
+                M.Verify();
+                yield return WaitIdle();
+                M.DesyncFrame = -1;
+            }
+        }
+        Log("Rewinds that came out different: " + bad + " of " + (last - 1));
+        Finish("check-movie.txt");
     }
 
     // The green prediction line should follow the route the real game takes, and working the lines out
