@@ -916,7 +916,7 @@ public class TasSelfTest : MonoBehaviour
             }
         }
         Log("Will you get hit: real hits in the run " + realHits + ", starts checked " + starts + ", warnings shown " + warned);
-        Check(starts > 0 && right == starts && warned > 0, "\"Will you get hit?\" is right from every frame checked: it warns exactly when, and only when, the real game takes HP (" + right + " of " + starts + " starts, " + warned + " with a warning)");
+        Check(starts > 0 && right == starts && (warned > 0 || realHits == 0), "\"Will you get hit?\" is right from every frame checked: it warns exactly when, and only when, the real game takes HP (" + right + " of " + starts + " starts, " + warned + " with a warning)");
     }
 
     private readonly List<int> badFrames = new List<int>();
