@@ -23,8 +23,9 @@ The level starts frozen on **frame 0**. One frame is 1/50th of a second, the sam
     - or select frames (Shift+click two frame numbers), then click a column name (**L R U D J A**) at the top of the grid to turn that button on (or off) for all of them
   - **Label for frame** (under the grid) is a bookmark: type a note for the current frame and press **Set**. It shows next to the frame number (◆) and as an orange dot on the route. It doesn't change the run.
   - Click a frame number to jump to that frame.
+  - **Scrolling:** use the mouse wheel, or the **scroll bar** on the right of the grid: drag the handle, click above or below it to jump a page, or hold the **▲ / ▼** arrows to move a row at a time. Scrolling turns off **Follow** (top right of the grid); tick it again to keep the current frame in view.
   - Green rows are checked exact, yellow rows aren't checked yet, and red marks a problem.
-- **Bottom, SPEED graph:** Pete's x speed (blue) and y speed (pink) over time, with the newest ghost's speed as a grey dashed line.
+- **Bottom, SPEED graph:** Pete's x speed (blue) and y speed (pink) over time, with the newest try's speed as a grey dashed line.
 - **In the level:**
   - Pete's route is drawn as a line, colored by speed (blue is slow, yellow is top speed, red is faster than running, like after a knockback).
   - The dots are every 10 frames, and the big dots every 50.
@@ -89,9 +90,13 @@ The level starts frozen on **frame 0**. One frame is 1/50th of a second, the sam
 - After an undo, the tool replays from the first frame that changed, so you see the old result straight away. You stay on the same frame.
 - Up to 300 steps are kept. Making a new change after undoing clears the redo steps.
 
-## Center camera
+## The camera
 
-Press **C**, or tick **Center camera on Pete** in the View tab. The camera then follows Pete and keeps him in the middle of the open part of the screen. Scroll the mouse wheel to zoom. Press C again for the game's normal room cameras. It also applies during video playback.
+The normal camera moves exactly like in the game: it trails a little behind Pete and slides from one room to the next. However you get to a frame (stepping, going back, jumping to a frame, Verify, loading a movie, the auto-search), the camera is exactly where the game would have it on that frame.
+
+- **Center camera:** press **C**, or tick **Center camera on Pete** in the View tab. The camera then follows Pete and keeps him in the middle of the open part of the screen. Scroll the mouse wheel to zoom. Press C again for the game's camera. It also applies during video playback.
+- **Zoom-out view:** press **M** to look around the whole level (see Keys).
+- The game's camera keeps running underneath both of these, so when you switch back it's exactly where the game would have it.
 
 ## Hitboxes
 
@@ -137,8 +142,14 @@ Limits: enemies are moved in a simple way. Walking enemies keep walking (and tur
 
 ## Finding the fastest line
 
-- **Ghosts:** whenever you change an earlier input, your old route stays on screen as a faded colored line, with a see-through "ghost Pete". You can see both routes at once. Pin the ghosts you want to keep in the **View** tab.
-- **Lines:** in the **Lines** tab, click *Add up-down line* (or left-right), then click in the level to place a finish line or checkpoint. The tab tells you which route reaches it first, and by how many frames (for example "3.40 frames faster").
+- **Tries:** whenever you change an earlier input, your old route is kept as a "try" (Try 1, Try 2, ...). It stays on screen as a faded colored line with a see-through "ghost Pete", so you can see both routes at once. Each try remembers its inputs. In the **View** tab, each try has:
+  - **Go back:** makes that try your route again. The route you had becomes a new try, so nothing is lost (and Undo works too).
+  - **Save:** keeps the try's inputs as a movie file. It shows up in the Movie tab.
+  - **Pin:** never removed automatically. The newest 6 unpinned tries are kept.
+  - Under each try it says where it **goes a different way** from your route now. That's where the time was gained or lost.
+- **Lines:** in the **Lines** tab, click *Add up-down line* (or left-right), then click in the level to place a finish line or checkpoint.
+  - "Your route now: frame 307.19" means your route first crosses the line a fifth of the way through frame 307.
+  - Each try shows its own frame and how much faster or slower it is than your route now (for example "36.02 frames slower than now"), plus where it splits off from your route. It has a **Go back** button too.
 - **Auto-search:** in the **Search** tab, pick a line and press *Start search*. The tool tries lots of inputs on its own, starting from the frame you're on.
   - **Beam search** tries any mix of buttons.
   - **Jump timing** holds one direction and tries every jump start and hold length.

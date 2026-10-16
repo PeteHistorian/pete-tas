@@ -25,6 +25,13 @@ public class TasGhost
     public List<Vector2> Pos = new List<Vector2>();
     public List<Vector2> Vel = new List<Vector2>();
     public int Version;
+    // The inputs that made this route, so you can go back to it, and the movie it came from
+    public TasMovie Inputs;
+    public string MovieName;
+    // Worked out when needed: the first frame where this route goes a different way from your route now
+    public int Split = -1;
+    public int SplitVersion = -1;
+    public int SplitCount = -1;
 }
 
 // A finish line or checkpoint you place in the level.

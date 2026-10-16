@@ -73,6 +73,21 @@ public class TasSelfTest : MonoBehaviour
             yield return ProbePredict(probeMovie, int.Parse(ArgAfter("-frame") ?? "1"));
             yield break;
         }
+        if(TasManager.HasArg("-noCamSave"))
+        {
+            TasCamState.Enabled = false;
+            Log("Saving the game camera's smoothing is switched off for this test (the old behaviour)");
+        }
+        string camMovie = ArgAfter("-tasCheckCamera");
+        if(camMovie != null)
+        {
+            M.LoadMovie(camMovie);
+            yield return WaitIdle();
+            Log("Camera check on " + camMovie + " (" + M.Movie.Length + " frames)");
+            yield return CameraTest(M.Movie.Length, true);
+            Finish("check-camera.txt");
+            yield break;
+        }
         string checkMovie = ArgAfter("-tasCheckMovie");
         if(checkMovie != null)
         {
@@ -355,6 +370,33 @@ public class TasSelfTest : MonoBehaviour
             Check(M.Movie.SameInputs(original), "Undoing again leaves the original movie");
         }
 
+        // 3g. Going back to an older try brings back its inputs and its exact route, and keeps the route you had
+        {
+            int at = Mathf.Min(200, last - 1);
+            M.Seek(at);
+            yield return WaitIdle();
+            TasMovie original = M.Movie.Clone();
+            ulong originalPrint = M.Timeline[at].Fingerprint;
+            M.Ghosts.Clear();
+            M.SetInput(at - 40, M.Movie.Get(at - 40) ^ Buttons.Right);
+            yield return WaitIdle();
+            TasMovie edited = M.Movie.Clone();
+            TasGhost oldTry = M.Ghosts.Count > 0 ? M.Ghosts[0] : null;
+            int split = oldTry != null ? M.SplitFrame(oldTry) : -9;
+            Check(oldTry != null && oldTry.Inputs != null && oldTry.Inputs.SameInputs(original), "Changing an input keeps the old route as a try, with its inputs (" + (oldTry != null ? oldTry.Name : "none") + ", goes a different way from frame " + split + ")");
+            M.UseTry(oldTry);
+            yield return WaitIdle();
+            bool wentBack = M.Movie.SameInputs(original) && M.Frame == at && M.Timeline.Count > at && M.Timeline[at].Fingerprint == originalPrint;
+            bool kept = M.Ghosts.Exists(g => g.Inputs != null && g.Inputs.SameInputs(edited)) && !M.Ghosts.Contains(oldTry);
+            Check(wentBack && kept, "\"Go back\" to a try puts back its inputs and Pete's exact result on frame " + at + ", and keeps the changed route as a try (back " + wentBack + ", kept " + kept + ")");
+            M.Verify();
+            yield return WaitIdle();
+            Check(M.DesyncFrame < 0, "After going back to a try, an exact replay agrees (desync " + M.DesyncFrame + ")");
+        }
+
+        // 3f. The game camera is exactly where the game would have it, however you got to the frame
+        yield return CameraTest(last, false);
+
         // 4. Movie text format round trip
         string text = movie.ToText();
         TasMovie back = TasMovie.FromText(text);
@@ -632,6 +674,171 @@ public class TasSelfTest : MonoBehaviour
             yield return TraceRewind(badFrames[bi]);
         }
         Finish("check-movie.txt");
+    }
+
+    // ---------- The game camera ----------
+    // After going back, stepping, playing slowly or switching camera modes, the camera must be exactly where a
+    // straight run from the start (what the real game does) has it on that frame.
+    private Vector3[] camRef;
+    private Vector2[] camPete;
+    private bool[] camHave;
+    private string[] camDesc;
+    private string camLastDesc = "";
+    private int camLastFrame = -1;
+    private int camChecked, camBad, camSkipped, camLogged;
+    private float camWorst;
+    private string camWhat = "";
+
+    // Camera position, with the zoom as the third number
+    private static Vector3 CamNow()
+    {
+        Camera c = Camera.main;
+        if(c == null)
+        {
+            return Vector3.zero;
+        }
+        Vector3 p = c.transform.position;
+        return new Vector3(p.x, p.y, c.orthographicSize);
+    }
+
+    private void CompareCam()
+    {
+        int f = M.Frame;
+        if(camRef == null || f < 1 || f >= camRef.Length || !camHave[f] || M.Player == null || !M.Player.Valid)
+        {
+            return;
+        }
+        if(Vector2.Distance(M.Player.Position, camPete[f]) > 1e-5f)
+        {
+            // Pete himself went somewhere else (a physics difference, checked elsewhere), so the camera can't match
+            camSkipped++;
+            return;
+        }
+        camChecked++;
+        string desc = TasCamState.Describe();
+        Vector3 now = CamNow();
+        float err = Vector3.Distance(now, camRef[f]);
+        camWorst = Mathf.Max(camWorst, err);
+        if(err > 0.0005f)
+        {
+            camBad++;
+            if(camLogged++ < 10)
+            {
+                Log("  " + camWhat + ": on frame " + f + " the camera is " + err.ToString("0.0000") + " off (" + now.ToString("F4") + ", clean run " + camRef[f].ToString("F4") + ")");
+            }
+            if(camLogged <= 2)
+            {
+                Log("    clean run, frame " + (f - 1) + ": " + (f >= 1 ? camDesc[f - 1] : "") + "\n    clean run, frame " + f + ": " + camDesc[f]);
+                Log("    this time, frame " + camLastFrame + ": " + camLastDesc + "\n    this time, frame " + f + ": " + desc);
+            }
+        }
+        camLastDesc = desc;
+        camLastFrame = f;
+    }
+
+    private IEnumerator CameraTest(int last, bool thorough)
+    {
+        // The clean run: straight from the start without going back, like the real game
+        camRef = new Vector3[last + 1];
+        camPete = new Vector2[last + 1];
+        camHave = new bool[last + 1];
+        camDesc = new string[last + 1];
+        TasManager.TickHook = () =>
+        {
+            int f = M.Frame;
+            if(f >= 0 && f <= last && M.Player != null && M.Player.Valid)
+            {
+                camRef[f] = CamNow();
+                camDesc[f] = TasCamState.Describe();
+                camPete[f] = M.Player.Position;
+                camHave[f] = true;
+            }
+        };
+        M.ReplayFromStart(last);
+        yield return WaitIdle();
+        last = Mathf.Min(last, M.Frame);
+        Log("Camera: clean run to frame " + last);
+        camChecked = camBad = camSkipped = camLogged = 0;
+        camWorst = 0f;
+        TasManager.TickHook = CompareCam;
+        System.Random rng = new System.Random(11);
+
+        // Going back one frame at a time (holding B); every frame replayed on the way is compared too
+        camWhat = "going back";
+        int stopAt = Mathf.Max(1, last - (thorough ? 400 : 60));
+        for(int k = last - 1; k >= stopAt; k--)
+        {
+            M.Seek(k);
+            yield return WaitIdle();
+            CompareCam();
+            yield return null;
+            CompareCam();
+        }
+        // Jumping around the run
+        camWhat = "jumping to a frame";
+        for(int i = 0; i < (thorough ? 80 : 15); i++)
+        {
+            int from = M.Frame, to = rng.Next(1, last);
+            camWhat = "jumping from frame " + from + " to " + to;
+            M.Seek(to);
+            yield return WaitIdle();
+            CompareCam();
+        }
+        Log("Camera: after going back and jumping around, " + camBad + " of " + camChecked + " frames off");
+        // Stepping forward one frame at a time, with pauses in between
+        camWhat = "stepping forward";
+        M.Seek(rng.Next(1, Mathf.Max(2, last / 2)));
+        yield return WaitIdle();
+        for(int j = 0; j < (thorough ? 200 : 60) && M.Frame < last; j++)
+        {
+            M.StepForward(1);
+            yield return WaitIdle();
+            yield return null;
+        }
+        // Playing at half speed
+        camWhat = "playing at 50%";
+        int speed = M.SpeedPercent;
+        M.SpeedPercent = 50;
+        M.Seek(rng.Next(1, Mathf.Max(2, last / 2)));
+        yield return WaitIdle();
+        int playTo = Mathf.Min(last, M.Frame + (thorough ? 150 : 50));
+        M.TogglePlay();
+        for(int n = 0; n < 2000 && M.Frame < playTo && M.CurrentMode == TasManager.Mode.Playing; n++)
+        {
+            yield return null;
+        }
+        M.Pause();
+        M.SpeedPercent = speed;
+        yield return WaitIdle();
+        // The center and zoom-out cameras: the game camera keeps running underneath, so switching back
+        // shows exactly what the game would
+        TasFreeCam fc = TasFreeCam.I;
+        if(fc != null)
+        {
+            for(int mode = 0; mode < 2; mode++)
+            {
+                camWhat = mode == 0 ? "center camera" : "zoom-out camera";
+                M.Seek(rng.Next(1, Mathf.Max(2, last - 60)));
+                yield return WaitIdle();
+                if(mode == 0) fc.ToggleCenter(); else fc.Toggle();
+                for(int j = 0; j < 40 && M.Frame < last; j++)
+                {
+                    M.StepForward(1);
+                    yield return WaitIdle();
+                }
+                M.StepBack(7);
+                yield return WaitIdle();
+                if(mode == 0) fc.ToggleCenter(); else fc.Toggle();
+                yield return null;
+                yield return null;
+                camWhat += " (after switching back)";
+                CompareCam();
+            }
+        }
+        TasManager.TickHook = null;
+        camWhat = "";
+        Log("Camera: compared " + camChecked + " frames, " + camBad + " off by more than 0.0005 (worst " + camWorst.ToString("0.0000") + "), " + camSkipped + " skipped because Pete himself was somewhere else");
+        Check(camBad == 0 && camChecked > 0, "The game camera is exactly where a straight run has it after going back, jumping around, stepping, playing at 50% and switching camera modes (" + camBad + " of " + camChecked + " frames off, worst " + camWorst.ToString("0.0000") + ")");
     }
 
     private readonly List<int> badFrames = new List<int>();

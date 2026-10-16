@@ -110,7 +110,6 @@ public class TasManager : MonoBehaviour
     private Action afterBoot;
     private bool fastMode;
     private float savedVolume = 1f;
-    private int savedCullingMask;
     private bool cullingSaved;
     private float autosaveAt;
     private Camera fastModeCamera;
@@ -268,6 +267,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
+        TasCamState.BeforeTick();
         int f = Frame + 1;
         Buttons input = InputForTick(f);
         PeteInput.TasPrevious = CurrentMode == Mode.Searching ? searchPrevious : Movie.Get(f - 1);
@@ -379,11 +379,13 @@ public class TasManager : MonoBehaviour
             BootStep();
             if(CurrentMode == Mode.Booting)
             {
+                TasCamState.EndOfFrame(true);
                 return;
             }
         }
         if(CurrentMode == Mode.VideoEndScreen)
         {
+            TasCamState.EndOfFrame(true);
             // When an export has recorded a few seconds of the end screen, go straight back to the editor
             bool exportDone = VideoExporting && TasVideoExport.I != null && !TasVideoExport.I.Exporting;
             if(exportDone || Input.GetKeyDown(KeyCode.Escape))
@@ -395,6 +397,8 @@ public class TasManager : MonoBehaviour
 
         bool tick = DecideTick();
         tickPending = tick;
+        // The game camera only runs on frames the game runs (see TasCamState)
+        TasCamState.EndOfFrame(tick);
         Time.timeScale = tick ? 1f : 0f;
         // Between frames the game's own scripts are switched off, so nothing can sneak in while paused
         FreezeGameScripts(!tick);
@@ -945,7 +949,11 @@ public class TasManager : MonoBehaviour
             PeteInput.TasPrevious = Movie.Get(frame - 1);
         }
         PeteInput.TasEdgesLive = false;
-        SnapCameras();
+        if(s.Cam == null || !TasCamState.Works)
+        {
+            // No saved camera smoothing: put the camera straight onto its target instead
+            SnapCameras();
+        }
     }
 
     public TasSnapshot CaptureSnapshot()
@@ -1058,9 +1066,11 @@ public class TasManager : MonoBehaviour
             fastModeCamera = Camera.main;
             if(fastModeCamera != null)
             {
-                savedCullingMask = fastModeCamera.cullingMask;
+                // Draw nothing while going fast, by pointing the camera's "what can I see" check at empty space.
+                // (Not by emptying its list of layers: the game's camera system uses that list to pick which room
+                // camera to follow, so the camera would stop moving with Pete and jump when the fast part ends.)
+                fastModeCamera.cullingMatrix = Matrix4x4.Ortho(-1f, 1f, -1f, 1f, 0.1f, 1f) * Matrix4x4.Translate(new Vector3(0f, 0f, 1e7f));
                 cullingSaved = true;
-                fastModeCamera.cullingMask = 0;
             }
         }
         else
@@ -1068,7 +1078,7 @@ public class TasManager : MonoBehaviour
             AudioListener.volume = savedVolume;
             if(fastModeCamera != null && cullingSaved)
             {
-                fastModeCamera.cullingMask = savedCullingMask;
+                fastModeCamera.ResetCullingMatrix();
             }
             fastModeCamera = null;
             cullingSaved = false;
@@ -1474,7 +1484,7 @@ public class TasManager : MonoBehaviour
     }
 
     // The first frame whose input is different, or -1 if every input is the same
-    private static int FirstDifference(TasMovie a, TasMovie b)
+    public static int FirstDifference(TasMovie a, TasMovie b)
     {
         int n = Math.Max(a.Length, b.Length);
         for(int f = 1; f <= n; f++)
@@ -1637,7 +1647,9 @@ public class TasManager : MonoBehaviour
     {
         TasGhost g = new TasGhost();
         ghostCounter++;
-        g.Name = name ?? ("Try " + ghostCounter + " (changed at frame " + branchFrame + ")");
+        g.Name = name ?? ("Try " + ghostCounter);
+        g.Inputs = Movie.Clone();
+        g.MovieName = MovieName;
         g.Color = GhostColors[(ghostCounter - 1) % GhostColors.Length];
         g.BranchFrame = branchFrame;
         foreach(TasFrameRecord r in Timeline)
@@ -1647,6 +1659,83 @@ public class TasManager : MonoBehaviour
         }
         AddGhost(g);
         return g;
+    }
+
+    // Makes an older try your current route again. The route you have now is kept as a try, so nothing is lost
+    // (and Undo works too).
+    public void UseTry(TasGhost g)
+    {
+        if(g == null || g.Inputs == null || CurrentMode == Mode.Video || CurrentMode == Mode.VideoEndScreen)
+        {
+            return;
+        }
+        if(CurrentMode == Mode.Playing)
+        {
+            SetMode(Mode.Paused);
+        }
+        if(Busy)
+        {
+            return;
+        }
+        int diff = FirstDifference(Movie, g.Inputs);
+        if(diff < 1)
+        {
+            Ghosts.Remove(g);
+            Say(g.Name + " has exactly the same inputs as your route now, so nothing changed.");
+            return;
+        }
+        Remember("go back to " + g.Name);
+        int keep = Frame;
+        TasGhost now = MakeGhost(diff);
+        ghostArmed = false;
+        InvalidateFrom(diff, true);
+        Ghosts.Remove(g);
+        Movie = g.Inputs.Clone();
+        MovieDirty = true;
+        Say("Went back to " + g.Name + " (its inputs are different from frame " + diff + "). The route you had is kept as " + now.Name + ".", 7f);
+        ResimulateTo(keep, diff);
+    }
+
+    // Saves an older try's inputs as a movie file (Movie tab), so it's kept for good
+    public void SaveTry(TasGhost g)
+    {
+        if(g == null || g.Inputs == null)
+        {
+            return;
+        }
+        string name = SanitizeName((string.IsNullOrEmpty(g.MovieName) ? MovieName : g.MovieName) + " " + g.Name.ToLowerInvariant());
+        try
+        {
+            g.Inputs.Save(MoviePath(name));
+            Say("Saved " + g.Name + " as the movie \"" + name + "\" (load it from the Movie tab).", 6f);
+        }
+        catch(Exception ex)
+        {
+            Say("Could not save: " + ex.Message, 8f);
+        }
+    }
+
+    // The first frame where an older try goes a different way from the route you have now (-1 = same so far)
+    public int SplitFrame(TasGhost g)
+    {
+        if(g.SplitVersion == RouteVersion && g.SplitCount == RoutePositions.Count)
+        {
+            return g.Split;
+        }
+        int n = Mathf.Min(g.Pos.Count, RoutePositions.Count);
+        int split = -1;
+        for(int f = 1; f < n; f++)
+        {
+            if((g.Pos[f] - RoutePositions[f]).sqrMagnitude > 1e-8f)
+            {
+                split = f;
+                break;
+            }
+        }
+        g.Split = split;
+        g.SplitVersion = RouteVersion;
+        g.SplitCount = RoutePositions.Count;
+        return split;
     }
 
     public void AddGhost(TasGhost g)

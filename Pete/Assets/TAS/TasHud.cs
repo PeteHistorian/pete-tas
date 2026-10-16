@@ -30,6 +30,9 @@ public class TasHud : MonoBehaviour
 
     // Input grid
     private int rollTop = 1;
+    private float arrowRepeatAt;
+    private float barGrab;
+    private GUIStyle arrowStyle;
     private bool rollFollow = true;
     private bool painting;
     private int paintColumn;
@@ -69,7 +72,9 @@ public class TasHud : MonoBehaviour
     private float lastRepeat;
 
     // Movie tab
-    private string saveName = "";
+    // null = show the movie's own name; an empty box is allowed while typing
+    private string saveName;
+    private string saveNameFor;
     private Vector2 fileScroll;
     private string[] files = new string[0];
     private float filesRefreshed;
@@ -619,6 +624,8 @@ public class TasHud : MonoBehaviour
         cell.normal.textColor = new Color(0.45f, 0.48f, 0.55f);
         cellOn = new GUIStyle(cell) { fontStyle = FontStyle.Bold };
         cellOn.normal.textColor = Color.black;
+        arrowStyle = new GUIStyle(label) { fontSize = 11, alignment = TextAnchor.MiddleCenter };
+        arrowStyle.normal.textColor = new Color(0.9f, 0.92f, 0.96f);
         button = new GUIStyle(GUI.skin.button) { fontSize = 12 };
         tabButton = new GUIStyle(GUI.skin.button) { fontSize = 11, padding = new RectOffset(1, 1, 2, 2) };
         toggle = new GUIStyle(GUI.skin.toggle) { fontSize = 12 };
@@ -908,7 +915,7 @@ public class TasHud : MonoBehaviour
         int rows = Mathf.Max(5, (int)((r.height - 30 - bottomBar) / rowH));
 
         GUI.Label(new Rect(r.x + 8, r.y + 6, 120, 20), "INPUTS", header);
-        rollFollow = GUI.Toggle(new Rect(r.x + r.width - 82, r.y + 6, 80, 20), rollFollow, " Follow", toggle);
+        rollFollow = GUI.Toggle(new Rect(r.x + 8 + numW + 6 * colW + 2, r.y + 6, Mathf.Max(56f, r.width - numW - 6 * colW - 12), 20), rollFollow, new GUIContent(" Follow", "Keep the current frame in view"), toggle);
         for(int c = 0; c < 6; c++)
         {
             Rect hr = new Rect(r.x + 8 + numW + c * colW, r.y + 8, colW - 3, 20);
@@ -935,6 +942,84 @@ public class TasHud : MonoBehaviour
             e.Use();
         }
 
+        // Scroll bar on the right (for anyone whose mouse wheel is awkward): drag it, click above or below the
+        // handle to jump a page, or hold the arrows to move a row at a time
+        const float barW = 20f;
+        float barX = r.x + r.width - barW - 4;
+        int lastFrame = Mathf.Max(Mathf.Max(m.Movie.Length, m.Timeline.Count - 1), m.Frame) + rows / 2;
+        int maxTop = Mathf.Max(1, lastFrame - rows + 2);
+        Rect upRect = new Rect(barX, top, barW, 18);
+        Rect downRect = new Rect(barX, top + rows * rowH - 18, barW, 18);
+        if(e.type == EventType.Repaint)
+        {
+            DrawRect(upRect, upRect.Contains(e.mousePosition) ? new Color(0.36f, 0.4f, 0.5f) : new Color(0.22f, 0.24f, 0.3f));
+            DrawRect(downRect, downRect.Contains(e.mousePosition) ? new Color(0.36f, 0.4f, 0.5f) : new Color(0.22f, 0.24f, 0.3f));
+        }
+        if(GUI.RepeatButton(upRect, new GUIContent("▲", "Scroll up (hold to keep going)"), arrowStyle) && Time.unscaledTime >= arrowRepeatAt)
+        {
+            arrowRepeatAt = Time.unscaledTime + 0.05f;
+            rollFollow = false;
+            rollTop = Mathf.Max(1, rollTop - 1);
+        }
+        if(GUI.RepeatButton(downRect, new GUIContent("▼", "Scroll down (hold to keep going)"), arrowStyle) && Time.unscaledTime >= arrowRepeatAt)
+        {
+            arrowRepeatAt = Time.unscaledTime + 0.05f;
+            rollFollow = false;
+            rollTop = rollTop + 1;
+        }
+        Rect track = new Rect(barX, upRect.yMax + 2, barW, downRect.y - upRect.yMax - 4);
+        float thumbH = Mathf.Clamp(track.height * rows / Mathf.Max(1f, maxTop + rows - 1), 28f, track.height);
+        float frac = maxTop > 1 ? (Mathf.Min(rollTop, maxTop) - 1f) / (maxTop - 1f) : 0f;
+        Rect thumb = new Rect(track.x + 2, track.y + frac * (track.height - thumbH), track.width - 4, thumbH);
+        int barId = GUIUtility.GetControlID(FocusType.Passive);
+        switch(e.GetTypeForControl(barId))
+        {
+            case EventType.MouseDown:
+                if(e.button == 0 && track.Contains(e.mousePosition))
+                {
+                    rollFollow = false;
+                    if(thumb.Contains(e.mousePosition))
+                    {
+                        // Grab the handle
+                        GUIUtility.hotControl = barId;
+                        barGrab = e.mousePosition.y - thumb.y;
+                    }
+                    else
+                    {
+                        // Click above or below the handle: a page up or down
+                        int page = Mathf.Max(1, rows - 2);
+                        rollTop = Mathf.Clamp(rollTop + (e.mousePosition.y < thumb.y ? -page : page), 1, maxTop);
+                    }
+                    e.Use();
+                }
+                break;
+            case EventType.MouseDrag:
+                if(GUIUtility.hotControl == barId)
+                {
+                    float f = Mathf.Clamp01((e.mousePosition.y - barGrab - track.y) / Mathf.Max(1f, track.height - thumbH));
+                    rollTop = Mathf.Clamp(1 + Mathf.RoundToInt(f * (maxTop - 1)), 1, maxTop);
+                    e.Use();
+                }
+                break;
+            case EventType.MouseUp:
+                if(GUIUtility.hotControl == barId)
+                {
+                    GUIUtility.hotControl = 0;
+                    e.Use();
+                }
+                break;
+            case EventType.Repaint:
+                if(GUIUtility.hotControl == barId && !Input.GetMouseButton(0))
+                {
+                    // The mouse was let go outside the window
+                    GUIUtility.hotControl = 0;
+                }
+                DrawRect(track, new Color(0.06f, 0.07f, 0.09f, 0.95f));
+                bool lit = GUIUtility.hotControl == barId || thumb.Contains(e.mousePosition);
+                DrawRect(thumb, lit ? new Color(1f, 0.82f, 0.3f) : new Color(0.62f, 0.66f, 0.76f));
+                break;
+        }
+
         int hoverFrame = -1;
         int hoverCol = -1;
         if(gridRect.Contains(e.mousePosition))
@@ -949,7 +1034,7 @@ public class TasHud : MonoBehaviour
         {
             int f = rollTop + i;
             float y = top + i * rowH;
-            Rect rowRect = new Rect(r.x + 4, y, r.width - 8, rowH - 1);
+            Rect rowRect = new Rect(r.x + 4, y, r.width - 8 - barW - 4, rowH - 1);
             Color bg = new Color(0.12f, 0.13f, 0.16f, 0.9f);
             if(f > m.Movie.Length) bg = new Color(0.09f, 0.09f, 0.1f, 0.9f);
             else if(f < m.Timeline.Count) bg = m.Timeline[f].Verified ? new Color(0.1f, 0.22f, 0.14f, 0.95f) : new Color(0.22f, 0.2f, 0.1f, 0.95f);
@@ -997,7 +1082,7 @@ public class TasHud : MonoBehaviour
             string mark;
             if(m.Movie.Markers.TryGetValue(f, out mark))
             {
-                GUI.Label(new Rect(r.x + 10 + numW + 6 * colW, y, r.width - numW - 6 * colW - 14, rowH), mark, small);
+                GUI.Label(new Rect(r.x + 10 + numW + 6 * colW, y, r.width - numW - 6 * colW - 18 - barW, rowH), mark, small);
             }
         }
 
@@ -1363,16 +1448,29 @@ public class TasHud : MonoBehaviour
         GUILayout.Label("Movie: <b>" + m.MovieName + "</b>" + (m.MovieDirty ? "  (changed)" : ""), label);
         GUILayout.Label(m.Movie.Length + " frames  =  " + TasManager.FormatFrames(m.Movie.Length), small);
         GUILayout.Space(4);
-        if(saveName == "") saveName = m.MovieName;
+        if(saveName == null || saveNameFor != m.MovieName)
+        {
+            // A different movie was loaded or saved: show its name
+            saveName = m.MovieName;
+            saveNameFor = m.MovieName;
+        }
         GUILayout.BeginHorizontal();
         GUILayout.Label("Name", small, GUILayout.Width(40));
         saveName = GUILayout.TextField(saveName, 40, field);
         if(GUILayout.Button("Save", button, GUILayout.Width(60)))
         {
-            m.SaveMovie(saveName);
-            saveName = m.MovieName;
-            GUIUtility.keyboardControl = 0;
-            filesRefreshed = 0;
+            if(saveName.Trim().Length == 0)
+            {
+                m.Say("Type a name for the movie first, then click Save.");
+            }
+            else
+            {
+                m.SaveMovie(saveName);
+                saveName = m.MovieName;
+                saveNameFor = m.MovieName;
+                GUIUtility.keyboardControl = 0;
+                filesRefreshed = 0;
+            }
         }
         GUILayout.EndHorizontal();
         GUILayout.BeginHorizontal();
@@ -1499,7 +1597,7 @@ public class TasHud : MonoBehaviour
         TasManager m = M;
         PredictionControls();
         GUILayout.Space(4);
-        GUILayout.Label("Each time you change an earlier input, the old route is kept here as a faded ghost line.", small);
+        GUILayout.Label("TRIES: each time you change an earlier input, your old route is kept here (and shown in the level as a faded line). \"Go back\" makes one your route again.", small);
         GUILayout.BeginHorizontal();
         TasDraw.ShowGhostPetes = GUILayout.Toggle(TasDraw.ShowGhostPetes, " Ghost Petes", toggle);
         TasDraw.ShowRoute = GUILayout.Toggle(TasDraw.ShowRoute, " Route lines", toggle);
@@ -1523,13 +1621,13 @@ public class TasHud : MonoBehaviour
             if(!TasFreeCam.I.Active) TasFreeCam.I.Toggle();
             TasFreeCam.I.FitRoute();
         }
-        if(GUILayout.Button("Save current route as a ghost", button))
+        if(GUILayout.Button("Save current route as a try", button))
         {
             TasGhost g = m.MakeGhost(m.GreenEnd + 1, "Saved route " + m.NextGhostNumber());
             g.Pinned = true;
         }
         ghostScroll = GUILayout.BeginScrollView(ghostScroll);
-        TasGhost remove = null;
+        TasGhost remove = null, useTry = null, saveTry = null;
         foreach(TasGhost g in m.Ghosts)
         {
             GUILayout.BeginHorizontal();
@@ -1539,9 +1637,18 @@ public class TasHud : MonoBehaviour
             GUI.color = old;
             GUILayout.Label(g.Name, small);
             GUILayout.FlexibleSpace();
-            g.Visible = GUILayout.Toggle(g.Visible, "", toggle, GUILayout.Width(18));
-            if(GUILayout.Button(g.Pinned ? "Pinned" : "Pin", button, GUILayout.Width(56))) g.Pinned = !g.Pinned;
-            if(GUILayout.Button("X", button, GUILayout.Width(24))) remove = g;
+            g.Visible = GUILayout.Toggle(g.Visible, new GUIContent("", "Show this try's line in the level"), toggle, GUILayout.Width(18));
+            if(GUILayout.Button(new GUIContent(g.Pinned ? "Pinned" : "Pin", "Pinned tries are never removed automatically"), button, GUILayout.Width(56))) g.Pinned = !g.Pinned;
+            if(GUILayout.Button(new GUIContent("X", "Forget this try"), button, GUILayout.Width(24))) remove = g;
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("    " + SplitText(g), small);
+            GUILayout.FlexibleSpace();
+            if(g.Inputs != null)
+            {
+                if(GUILayout.Button(new GUIContent("Go back", "Make " + g.Name + " your current route again. The route you have now is kept as a try."), button, GUILayout.Width(64))) useTry = g;
+                if(GUILayout.Button(new GUIContent("Save", "Save " + g.Name + "'s inputs as a movie file (Movie tab)"), button, GUILayout.Width(48))) saveTry = g;
+            }
             GUILayout.EndHorizontal();
         }
         GUILayout.EndScrollView();
@@ -1549,17 +1656,37 @@ public class TasHud : MonoBehaviour
         {
             m.Ghosts.Remove(remove);
         }
-        if(m.Ghosts.Count > 0 && GUILayout.Button("Remove all unpinned ghosts", button))
+        if(saveTry != null)
+        {
+            m.SaveTry(saveTry);
+        }
+        if(useTry != null)
+        {
+            m.UseTry(useTry);
+        }
+        if(m.Ghosts.Count > 0 && GUILayout.Button("Remove all unpinned tries", button))
         {
             m.Ghosts.RemoveAll(g => !g.Pinned);
         }
-        GUILayout.Label("Pinned ghosts are never removed automatically. Up to " + m.MaxGhosts + " unpinned ghosts are kept.", small);
+        GUILayout.Label("Pinned tries are never removed automatically. Up to " + m.MaxGhosts + " unpinned tries are kept. Save one to keep it as a movie file.", small);
+    }
+
+    // Where an older try stops matching your route now, and which movie it came from
+    private string SplitText(TasGhost g)
+    {
+        int split = M.SplitFrame(g);
+        string s = split > 0 ? "goes a different way from frame " + split : "same path as your route so far";
+        if(!string.IsNullOrEmpty(g.MovieName) && g.MovieName != M.MovieName)
+        {
+            s += " (movie " + g.MovieName + ")";
+        }
+        return s;
     }
 
     private void LinesTab()
     {
         TasManager m = M;
-        GUILayout.Label("Put a finish line or checkpoint in the level, then compare which route reaches it first.", small);
+        GUILayout.Label("Put a finish line or checkpoint in the level. Each row says on which frame a route first crosses it (frame 307.19 = a fifth of the way through frame 307), so you can see which try is fastest.", small);
         GUILayout.BeginHorizontal();
         if(GUILayout.Button("Add up-down line", button)) { PlacingLine = true; PlacingVertical = true; }
         if(GUILayout.Button("Add left-right line", button)) { PlacingLine = true; PlacingVertical = false; }
@@ -1567,6 +1694,7 @@ public class TasHud : MonoBehaviour
 
         lineScroll = GUILayout.BeginScrollView(lineScroll);
         TasLine remove = null;
+        TasGhost useTry = null;
         foreach(TasLine line in m.Lines)
         {
             GUILayout.BeginHorizontal();
@@ -1584,12 +1712,17 @@ public class TasHud : MonoBehaviour
 
             // Which route gets there first
             float cur = line.FirstCrossing(m.RoutePositions);
-            GUILayout.Label("   Current route: " + CrossText(cur, -1f), label);
+            GUILayout.Label("   Your route now: " + CrossText(cur, -1f), label);
             foreach(TasGhost g in m.Ghosts)
             {
                 if(!g.Visible) continue;
                 float gc = line.FirstCrossing(g.Pos);
+                GUILayout.BeginHorizontal();
                 GUILayout.Label("   <color=#" + ColorUtility.ToHtmlStringRGB(g.Color) + ">" + g.Name + "</color>: " + CrossText(gc, cur), small);
+                GUILayout.FlexibleSpace();
+                if(g.Inputs != null && GUILayout.Button(new GUIContent("Go back", "Make " + g.Name + " your current route again. The route you have now is kept as a try."), button, GUILayout.Width(64))) useTry = g;
+                GUILayout.EndHorizontal();
+                GUILayout.Label("      " + SplitText(g), small);
             }
             GUILayout.Space(4);
         }
@@ -1599,9 +1732,17 @@ public class TasHud : MonoBehaviour
             m.Lines.Remove(remove);
             m.RouteVersion++;
         }
+        if(useTry != null)
+        {
+            m.UseTry(useTry);
+        }
         if(m.Lines.Count == 0)
         {
             GUILayout.Label("No lines yet.", small);
+        }
+        else if(m.Ghosts.Count > 0)
+        {
+            GUILayout.Label("Tries are your older routes: one is kept each time you change inputs. \"Go back\" makes one your route again (the route you have now becomes a try). Pin or save tries in the View tab.", small);
         }
     }
 
@@ -1613,8 +1754,8 @@ public class TasHud : MonoBehaviour
         {
             float d = crossing - compareTo;
             if(Mathf.Abs(d) < 0.005f) s += "  (same)";
-            else if(d > 0) s += "  <color=#ff8080>(" + d.ToString("0.00") + " frames slower)</color>";
-            else s += "  <color=#80ff90>(" + (-d).ToString("0.00") + " frames faster)</color>";
+            else if(d > 0) s += "  <color=#ff8080>(" + d.ToString("0.00") + " frames slower than now)</color>";
+            else s += "  <color=#80ff90>(" + (-d).ToString("0.00") + " frames faster than now)</color>";
         }
         return s;
     }

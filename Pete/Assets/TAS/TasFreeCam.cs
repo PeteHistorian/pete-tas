@@ -36,6 +36,10 @@ public class TasFreeCam : MonoBehaviour
         else
         {
             SetBrain(cam, true);
+            if(!CenterOnPete)
+            {
+                TasCamState.ShowGameCamera();
+            }
         }
     }
 
@@ -56,6 +60,7 @@ public class TasFreeCam : MonoBehaviour
             if(cam != null && !Active)
             {
                 SetBrain(cam, true);
+                TasCamState.ShowGameCamera();
             }
             if(TasManager.I != null) TasManager.I.Say("Center camera OFF: back to the game's own room cameras.");
         }
@@ -94,14 +99,15 @@ public class TasFreeCam : MonoBehaviour
     private Camera darkenedCam;
     private Color savedBackground;
 
-    // Switches the game's own camera system on or off. While the TAS moves the camera, the empty space
-    // outside the level is shown dark instead of the game's bright background colour.
+    // The game's own camera keeps running underneath (so it's exactly where the game would have it when you switch
+    // back); this camera just moves the picture after it. While the TAS moves the camera, the empty space outside
+    // the level is shown dark instead of the game's bright background colour.
     private void SetBrain(Camera cam, bool on)
     {
         CinemachineBrain brain = cam.GetComponent<CinemachineBrain>();
-        if(brain != null && brain.enabled != on)
+        if(brain != null && !brain.enabled)
         {
-            brain.enabled = on;
+            brain.enabled = true;
         }
         if(!on && darkenedCam != cam)
         {

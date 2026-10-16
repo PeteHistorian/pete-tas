@@ -460,6 +460,9 @@ public class TasSearch
         g.Name = "Search #" + (index + 1) + (r.Crossing >= 0 ? " (+" + r.Crossing.ToString("0.0") + "f)" : "");
         g.Color = new Color(1f, 0.95f, 0.3f);
         g.BranchFrame = StartFrame + 1;
+        g.Inputs = m.Movie.Clone();
+        g.Inputs.SetRange(StartFrame + 1, r.Inputs);
+        g.MovieName = m.MovieName;
         for(int f = 0; f <= StartFrame && f < m.Timeline.Count; f++)
         {
             g.Pos.Add(m.Timeline[f].Pos);

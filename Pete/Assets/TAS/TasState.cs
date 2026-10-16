@@ -21,10 +21,12 @@ public class TasSnapshot
     public bool PlayerDied;
     public bool Finished;
     public ulong Fingerprint;
+    // The game camera's smoothing and room-to-room slide (null if it couldn't be saved)
+    public TasCamSnapshot Cam;
 
     public long ApproxBytes
     {
-        get { return 64 + F.Length * 4L + I.Length * 4L + U.Length * 4L + D.Length * 8L + O.Length * 8L + Present.Length; }
+        get { return 64 + F.Length * 4L + I.Length * 4L + U.Length * 4L + D.Length * 8L + O.Length * 8L + Present.Length + (Cam != null ? Cam.ApproxBytes : 0); }
     }
 }
 
@@ -413,6 +415,7 @@ public class TasStateRegistry
         s.PlayerDied = TasHooks.PlayerDied;
         s.Finished = TasHooks.Finished;
         s.Fingerprint = ComputeFingerprint(s, skipF, skipI, skipD);
+        s.Cam = TasCamState.Capture();
         return s;
     }
 
@@ -703,6 +706,8 @@ public class TasStateRegistry
                 }
             }
             Apply(snap, false);
+            // Last, once the room cameras are switched on or off as they were
+            TasCamState.Restore(snap.Cam);
         }
         finally
         {
