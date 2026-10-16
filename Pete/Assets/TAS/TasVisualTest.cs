@@ -215,8 +215,8 @@ public class TasVisualTest : MonoBehaviour
         TasPredict.Show = true;
         TasHud.I.ShowTab("Ghosts");
         if(TasFreeCam.I != null && !TasFreeCam.I.CenterOnPete) TasFreeCam.I.ToggleCenter();
-        bool shotHit = false, shotPogo = false;
-        for(int f = 200; f < 1160 && !(shotHit && shotPogo); f += 6)
+        bool shotHit = false, shotPogo = false, shotWill = false;
+        for(int f = 200; f < 1160 && !(shotHit && shotPogo && shotWill); f += 6)
         {
             M.Seek(f);
             yield return WaitIdle();
@@ -227,6 +227,13 @@ public class TasVisualTest : MonoBehaviour
             {
                 if(line2.Color == TasPredict.HitColor) hasHit = true;
                 if(line2.Color == TasPredict.AttackColor || line2.Color == TasPredict.AttackUpColor || line2.Color == TasPredict.AttackDownColor) hasPogo = true;
+            }
+            TasPrediction pathNow = TasPredict.I.Path;
+            if(!shotWill && pathNow != null && pathNow.Hits.Exists(h => h >= 12))
+            {
+                yield return Shot("prediction-will-hit");
+                enemyInfo += " will-hit warning at frame " + f + ";";
+                shotWill = true;
             }
             if((hasHit && !shotHit) || (hasPogo && !shotPogo))
             {

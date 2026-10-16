@@ -428,6 +428,13 @@ public class TasHud : MonoBehaviour
         TasPredict.PathToEnd = GUILayout.Toggle(TasPredict.PathToEnd, new GUIContent(" ...to where inputs end", "Follow the whole movie, then let go and show where Pete stops"), toggle);
         GUILayout.EndHorizontal();
         GUILayout.BeginHorizontal();
+        Color oldWill = GUI.color;
+        GUI.color = TasPredict.WillHitColor;
+        GUILayout.Label("■", label, GUILayout.Width(12));
+        GUI.color = oldWill;
+        TasPredict.ShowWillHit = GUILayout.Toggle(TasPredict.ShowWillHit, new GUIContent(" Will you get hit? (warning + the enemy's path)", "Not a \"what if\": shows which enemy really hits Pete if you keep your inputs, and when"), toggle);
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
         TasPredict.ShowLongJump = ColorToggle(TasPredict.ShowLongJump, TasPredict.HoldColor, "Longest jump", 140);
         TasPredict.ShowShortJump = ColorToggle(TasPredict.ShowShortJump, TasPredict.TapColor, "Shortest jump");
         GUILayout.EndHorizontal();
@@ -553,6 +560,70 @@ public class TasHud : MonoBehaviour
             }
         }
         GUI.color = old;
+    }
+
+    // "Will you get hit?": a warning when your inputs get Pete hit soon, or an all-clear when they don't
+    private void DrawHitWarning()
+    {
+        TasPredict pr = TasPredict.I;
+        if(pr == null || !TasPredict.ShowWillHit || !TasPredict.Active(M) || pr.Path == null || pr.Problem.Length > 0)
+        {
+            return;
+        }
+        TasPrediction path = pr.Path;
+        int first = -1, others = 0;
+        string who = "";
+        for(int k = 0; k < path.Hits.Count; k++)
+        {
+            if(path.Hits[k] < 1)
+            {
+                continue;
+            }
+            if(first < 0)
+            {
+                first = path.Hits[k];
+                who = k < path.HitBy.Count ? path.HitBy[k] : "enemy";
+            }
+            else
+            {
+                others++;
+            }
+        }
+        string text;
+        Color bg;
+        if(first >= 1)
+        {
+            string what = who == "spikes" ? "the spikes hurt Pete" : "the " + who + " hits Pete";
+            text = "HIT AHEAD: if you keep these inputs, " + what + " in " + first + (first == 1 ? " frame" : " frames") + " (on frame " + (M.Frame + first) + ")";
+            if(path.DeathAt >= 1)
+            {
+                text += ", and he dies on frame " + (M.Frame + path.DeathAt);
+            }
+            else if(others > 0)
+            {
+                text += ", then " + others + " more hit" + (others > 1 ? "s" : "");
+            }
+            bg = new Color(0.6f, 0.04f, 0.04f, 0.92f);
+        }
+        else
+        {
+            int ahead = Mathf.Max(0, path.Pos.Count - 1);
+            text = "No hits: nothing hits Pete in the next " + ahead + " frames with these inputs";
+            bg = new Color(0.04f, 0.3f, 0.12f, 0.85f);
+        }
+        Rect open = OpenArea();
+        GUIContent content = new GUIContent(text);
+        Vector2 size = msg.CalcSize(content);
+        float w = Mathf.Min(size.x + 20f, open.width / scale - 16f);
+        Rect r = new Rect(open.x / scale + (open.width / scale - w) * 0.5f, 74f, w, size.y + 8f);
+        if(Event.current.type == EventType.Repaint)
+        {
+            Color old = GUI.color;
+            GUI.color = bg;
+            GUI.DrawTexture(r, Texture2D.whiteTexture);
+            GUI.color = old;
+        }
+        GUI.Label(new Rect(r.x + 10f, r.y + 4f, r.width - 20f, r.height - 8f), content, msg);
     }
 
     private void HitboxLegend()
@@ -694,6 +765,8 @@ public class TasHud : MonoBehaviour
         {
             return;
         }
+
+        DrawHitWarning();
 
         float leftW = 336f;
         DrawStatus(new Rect(8, 8, leftW, 398));

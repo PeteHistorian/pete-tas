@@ -17,6 +17,10 @@ public class TasPrediction
     public readonly List<bool> Ground = new List<bool>();
     public readonly List<int> Landings = new List<int>();
     public readonly List<int> Hits = new List<int>();
+    // What hits Pete at each of those frames ("Fly", "spikes")
+    public readonly List<string> HitBy = new List<string>();
+    // Drawn pulsing, so it stands out (the "will you get hit" lines)
+    public bool Pulse;
     public int JumpAt = -1;
     public int DeathAt = -1;
     // Goes exactly where the green line goes (drawn thin, on top of it, so both still show)
@@ -70,6 +74,9 @@ public class TasPredict : MonoBehaviour
     public static bool ShowShortJump = true;
     public static bool ShowLetGo = true;
     public static bool ShowHits = true;
+    // Not a "what if": the enemies that really will hit Pete if you keep your inputs, with their own path up to the
+    // hit, and a warning on screen
+    public static bool ShowWillHit = true;
     public static bool ShowAttacks = true;
     // Knockback highlighted on the lines, with labels saying how long it lasts and where Pete lands or stops
     public static bool ShowKnockback = true;
@@ -93,6 +100,7 @@ public class TasPredict : MonoBehaviour
     public static readonly Color TapColor = new Color(0.8f, 0.5f, 1f);
     public static readonly Color ReleaseColor = new Color(1f, 0.9f, 0.3f);
     public static readonly Color HitColor = new Color(1f, 0.32f, 0.32f);
+    public static readonly Color WillHitColor = new Color(1f, 0.08f, 0.08f);
     public static readonly Color PogoColor = new Color(1f, 0.55f, 0.15f);
     public static readonly Color AttackColor = new Color(1f, 0.55f, 0.15f);
     public static readonly Color AttackUpColor = new Color(1f, 0.45f, 0.8f);
@@ -415,7 +423,7 @@ public class TasPredict : MonoBehaviour
         bool live = Live(m);
         Vector2 p = m.Player.Position, v = m.Player.Velocity;
         return f + "|" + m.Restores + "|" + m.Timeline.Count + "|" + m.Movie.Length + "|" + h + "|" + p.x.ToString("R") + "," + p.y.ToString("R") + "|" + v.x.ToString("R") + "," + v.y.ToString("R")
-            + "|" + (live ? (int)TasManager.ReadPlayerInput() : -1) + "|" + Frames + ShowPath + PathToEnd + ShowLongJump + ShowShortJump + ShowLetGo + ShowHits + ShowAttacks + ShowKnockback + ShowNames + ExitsFirst + FullPrime;
+            + "|" + (live ? (int)TasManager.ReadPlayerInput() : -1) + "|" + Frames + ShowPath + PathToEnd + ShowLongJump + ShowShortJump + ShowLetGo + ShowHits + ShowWillHit + ShowAttacks + ShowKnockback + ShowNames + ExitsFirst + FullPrime;
     }
 
     // While recording, the line follows the keys you're holding right now
@@ -462,6 +470,10 @@ public class TasPredict : MonoBehaviour
             if(ShowPath)
             {
                 Lines.Add(green);
+            }
+            if(ShowWillHit)
+            {
+                AddWillHitLines(green);
             }
             if(!live)
             {
@@ -565,6 +577,47 @@ public class TasPredict : MonoBehaviour
         finally
         {
             LastMs = (Time.realtimeSinceStartup - t0) * 1000f;
+        }
+    }
+
+    // "Will you get hit?": for every enemy that really hits Pete on your path, that enemy's own path up to the hit
+    private void AddWillHitLines(TasPrediction green)
+    {
+        HashSet<Foe> done = new HashSet<Foe>();
+        for(int k = 0; k < green.Hits.Count && k < pathHitFoes.Count; k++)
+        {
+            int j = green.Hits[k];
+            Foe f = pathHitFoes[k];
+            if(j < 1 || f == null || !done.Add(f))
+            {
+                continue;
+            }
+            bool spikes = f.Name == "spikes";
+            TasPrediction w = new TasPrediction();
+            w.Name = spikes ? "The spikes will hit you" : "The " + f.Name + " will hit you";
+            w.Color = WillHitColor;
+            w.Width = 3f;
+            w.Pulse = true;
+            List<Vector2> track;
+            if(pathTracks.TryGetValue(f, out track) && track.Count > 1)
+            {
+                for(int i = 0; i <= j && i < track.Count; i++)
+                {
+                    w.Pos.Add(track[i]);
+                }
+            }
+            else if(j < green.Pos.Count)
+            {
+                // Spikes don't move: just the spot
+                w.Pos.Add(green.Pos[j]);
+            }
+            if(w.Pos.Count == 0)
+            {
+                continue;
+            }
+            w.Hits.Add(w.Pos.Count - 1);
+            w.Tag = (spikes ? "spikes hit you" : f.Name + " hits you") + " in " + j + " f";
+            Lines.Add(w);
         }
     }
 
@@ -1160,6 +1213,18 @@ public class TasPredict : MonoBehaviour
         p.Pos.Add(pos0);
         p.Vel.Add(vel0);
         p.Ground.Add(s.OnGround);
+        if(isPath)
+        {
+            pathHitFoes.Clear();
+            pathTracks.Clear();
+            foreach(Foe f in foes)
+            {
+                if(f.Simulated && f.Moves && f.CanHurt)
+                {
+                    pathTracks[f] = new List<Vector2> { f.Pos };
+                }
+            }
+        }
         bool knocked = s.Clears.Count > 0 || !s.CanMove;
         p.Knock.Add(knocked);
         kbFrom = knocked ? 0 : -1;
@@ -1501,6 +1566,13 @@ public class TasPredict : MonoBehaviour
             p.Pos.Add(dummy.position);
             p.Vel.Add(dummy.velocity);
             p.Ground.Add(s.OnGround);
+            if(isPath)
+            {
+                foreach(KeyValuePair<Foe, List<Vector2>> t in pathTracks)
+                {
+                    t.Value.Add(t.Key.Pos);
+                }
+            }
             bool knockNow = s.Clears.Count > 0 || !s.CanMove;
             p.Knock.Add(knockNow);
             if(knocked && !knockNow)
@@ -1656,6 +1728,9 @@ public class TasPredict : MonoBehaviour
 
     private TasPrediction current;
     private bool currentIsPath;
+    // On the green line: what hit Pete (one per hit) and where each enemy that can hurt went, frame by frame
+    private readonly List<Foe> pathHitFoes = new List<Foe>();
+    private readonly Dictionary<Foe, List<Vector2>> pathTracks = new Dictionary<Foe, List<Vector2>>();
     private int kbFrom = -1;
 
     // PlayerHealth.PlayerDamage + KnockbackTrigger.Knockback, as the game does them
@@ -1673,6 +1748,11 @@ public class TasPredict : MonoBehaviour
         s.Clears.Add(frameTime0 + j * tickTime - physicsOffset + kbTimeTrigger);
         f.Cooldown = f.AttackDelay;
         p.Hits.Add(j);
+        p.HitBy.Add(f.Name);
+        if(currentIsPath)
+        {
+            pathHitFoes.Add(f);
+        }
         kbFrom = j;
         if(j > 0)
         {

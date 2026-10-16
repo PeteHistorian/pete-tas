@@ -282,10 +282,11 @@ public class TasDraw : MonoBehaviour
                     }
                 }
             }
+            float pulse = p.Pulse ? 0.6f + 0.4f * Mathf.Sin(Time.unscaledTime * 9f) : 1f;
             for(int i = 1; i < n; i++)
             {
                 Color c = p.Color;
-                c.a = Mathf.Lerp(0.95f, 0.35f, (float)i / Mathf.Max(1, n - 1));
+                c.a = p.Pulse ? pulse : Mathf.Lerp(0.95f, 0.35f, (float)i / Mathf.Max(1, n - 1));
                 Seg(p.Pos[i - 1], p.Pos[i], p.Width, c, z);
             }
             Color dot = p.Color;
@@ -312,7 +313,7 @@ public class TasDraw : MonoBehaviour
             {
                 if(i < n)
                 {
-                    Cross(p.Pos[i], 7f, TasPredict.HitColor, z);
+                    Cross(p.Pos[i], p.Pulse ? 11f : 7f, p.Pulse ? p.Color : TasPredict.HitColor, z);
                 }
             }
             if(p.DeathAt >= 0 && p.DeathAt < n)

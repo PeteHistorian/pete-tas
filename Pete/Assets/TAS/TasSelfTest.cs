@@ -841,6 +841,84 @@ public class TasSelfTest : MonoBehaviour
         Check(camBad == 0 && camChecked > 0, "The game camera is exactly where a straight run has it after going back, jumping around, stepping, playing at 50% and switching camera modes (" + camBad + " of " + camChecked + " frames off, worst " + camWorst.ToString("0.0000") + ")");
     }
 
+    // "Will you get hit?": from many frames of the run, the first hit the green line warns about must be exactly the
+    // first time the real game takes away HP (and no warning when the real game doesn't)
+    private IEnumerator WillHitTest(TasPredict pr)
+    {
+        const int ahead = 50;
+        int last = M.Movie.Length;
+        int[] hp = new int[last + 2];
+        bool[] have = new bool[last + 2];
+        TasManager.TickHook = () =>
+        {
+            int f = M.Frame;
+            if(f >= 0 && f <= last && M.Player != null && M.Player.Valid)
+            {
+                hp[f] = M.Player.Hp;
+                have[f] = true;
+            }
+        };
+        M.ReplayFromStart(last);
+        yield return WaitIdle();
+        TasManager.TickHook = null;
+        last = Mathf.Min(last, M.Frame);
+        if(M.DeathFrame > 0)
+        {
+            last = Mathf.Min(last, M.DeathFrame - 1);
+        }
+        int realHits = 0;
+        for(int f = 2; f <= last; f++)
+        {
+            if(have[f] && have[f - 1] && hp[f] < hp[f - 1]) realHits++;
+        }
+        M.ReplayFromStart(5);
+        yield return WaitIdle();
+        int starts = 0, right = 0, warned = 0, shown = 0;
+        for(int k = 5; k + ahead <= last; k += 7)
+        {
+            if(k > M.Frame)
+            {
+                M.Seek(k);
+                yield return WaitIdle();
+            }
+            if(M.Frame != k)
+            {
+                continue;
+            }
+            TasPrediction p = pr.PredictPath(ahead);
+            if(p == null)
+            {
+                continue;
+            }
+            int predicted = -1;
+            foreach(int h in p.Hits)
+            {
+                if(h >= 1 && (predicted < 0 || h < predicted)) predicted = h;
+            }
+            int real = -1;
+            for(int j = 1; j <= ahead && k + j <= last; j++)
+            {
+                if(have[k + j] && have[k + j - 1] && hp[k + j] < hp[k + j - 1])
+                {
+                    real = j;
+                    break;
+                }
+            }
+            starts++;
+            if(predicted >= 1) warned++;
+            if(predicted == real)
+            {
+                right++;
+            }
+            else if(shown++ < 5)
+            {
+                Log("  from frame " + k + ": the warning says " + (predicted >= 1 ? "a hit at +" + predicted : "no hit") + ", the real game " + (real >= 1 ? "takes HP at +" + real : "doesn't take HP") + " (within " + ahead + " frames)");
+            }
+        }
+        Log("Will you get hit: real hits in the run " + realHits + ", starts checked " + starts + ", warnings shown " + warned);
+        Check(starts > 0 && right == starts && warned > 0, "\"Will you get hit?\" is right from every frame checked: it warns exactly when, and only when, the real game takes HP (" + right + " of " + starts + " starts, " + warned + " with a warning)");
+    }
+
     private readonly List<int> badFrames = new List<int>();
     private readonly Dictionary<int, string> trace = new Dictionary<int, string>();
     private string soundsThisTick = "";
@@ -938,6 +1016,7 @@ public class TasSelfTest : MonoBehaviour
             Check(false, "Prediction lines are running");
             yield break;
         }
+        yield return WillHitTest(pr);
         Log("Prediction speed: " + pr.Benchmark());
         // A clean run of the whole movie to compare against
         M.Verify();

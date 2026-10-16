@@ -119,11 +119,17 @@ Each kind of line has its own tick box in the View tab, so you can show only the
   - While recording, it follows the keys you're holding right now, so you can see where you'll land before you get there.
   - Normally, past the end of the movie, it keeps holding the last frame's buttons.
   - Tick **...to where inputs end** and it follows the whole rest of the movie instead, then lets go of everything and shows where Pete **stops**.
+- **Bright red, flashing: will you get hit?** This one isn't a "what if". It checks your real inputs, with the enemies moving the way they will. If something is going to hit Pete:
+  - the enemy's own path is drawn, flashing, from where it is now to where it hits him, with a big X at the hit
+  - a red bar at the top of the screen says what hits him and when, for example "HIT AHEAD: if you keep these inputs, the Fly hits Pete in 14 frames (on frame 1234)". It also says if more hits follow, or if he dies.
+  - if nothing will hit him, a green bar says so ("No hits: nothing hits Pete in the next 75 frames").
+
+  Change your inputs and it updates straight away, so you can try things until the bar turns green. It looks as far ahead as the lines do (the **- / +** setting, or the whole movie with **...to where inputs end**).
 - **Blue: longest jump.** Hold jump from the next frame on. Its name tag says how many frames of holding make a difference ("hold 27 f"). Holding jump only lowers gravity while Pete is still going up, so holding any longer than that changes nothing.
 - **Purple: shortest jump.** Tap jump for a single frame, the lowest hop you can do. If jump is already held, the shortest you can still get is letting go right now, and the tag says so.
 - **Yellow: let go of jump.** Useful while Pete is rising with jump held: it shows how much shorter the jump gets if you let go now.
   - The jump lines you've ticked always show. When one goes exactly where the green line goes (for example, "let go of jump" after you've already let go), it's drawn as a thin colored line down the middle of the green one.
-- **Red: if an enemy hits you.** One line for each enemy or spike near Pete that can hurt him right now, showing where the knockback throws him.
+- **Red: if an enemy hits you.** A "what if": one line for each enemy or spike near Pete that could hurt him right now, showing where the knockback would throw him. It doesn't mean it *will* happen. For that, see "will you get hit?" above.
 - **Attacks: what happens if you attack on the next frame.** Orange is forward, pink is up, tan is down (the pogo). They only show up when the swing actually hits something and changes where Pete goes. For example, they show a **fly pull**: Pete's sword hits the fly while the fly hits Pete.
 - **Name at the end of each line** (tick box): every line gets its name in its own color at its end ("your path", "longest jump: hold 27 f", "if the Fly hits you", "attack now"), so you can always tell which is which.
 - **Red X:** a hit on that line. On the green line it means your inputs really do get Pete hit there. On the other lines it means "if you did this instead, you'd get hit here".
