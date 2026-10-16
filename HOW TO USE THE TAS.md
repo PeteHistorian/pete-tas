@@ -112,13 +112,23 @@ Tick **Level collision too** to also see every floor and wall tile (white) and t
 
 ## Making a video
 
-In the **Video** tab, press **Play video from the start**. The panel hides and the whole run plays at normal speed. You can turn on:
+In the **Video** tab, pick what to show:
 - a button display
 - the frame counter
 - the route line
+- hitboxes
 - going to the end screen at the finish
 
-For a perfectly smooth video, also tick **save every frame as a picture**. The frames go into the TAS Files folder, and a tool like ffmpeg can turn them into a 50 fps video.
+Then choose one of these:
+- **Play video from the start:** watch the whole run at normal speed with the panel hidden.
+- **Export video file (MP4 with sound):** saves the whole run as a ready-to-upload MP4.
+  - The file goes in `TAS Files\Videos`. **Open videos folder** takes you there.
+  - Every frame is saved at 50 fps with the game's sound perfectly in sync. It runs faster than normal while saving and never drops a frame, even on a slow computer.
+  - The video is the size of the TAS window. For a sharp 1080p video, make the window bigger or press **Alt+Enter** for fullscreen before exporting, and don't resize it while it saves.
+  - If you also turned on the end screen, the video ends with a few seconds of it, then the tool returns to the editor by itself.
+  - Press **Esc** to stop an export early. Whatever was saved so far still becomes a video.
+
+The MP4 export uses **ffmpeg**, a free video tool that's installed on this PC. On a computer without it, the export saves every frame as a picture plus a `sound.wav` file instead, and most video editors can import those.
 
 ## Good to know
 

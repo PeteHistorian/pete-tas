@@ -24,6 +24,9 @@ public static class TasHooks
     // The TAS tool shifts it when it rewinds, because Unity's own clock can't go backwards.
     public static double TimeOffset;
 
+    // Told about every sound effect the game plays (used by the TAS video export).
+    public static System.Action<AudioSource> SoundPlayed;
+
     public static double GameTime
     {
         get { return Time.timeAsDouble - TimeOffset; }
@@ -37,5 +40,6 @@ public static class TasHooks
         Finished = false;
         AllowFinishSceneLoad = false;
         TimeOffset = 0;
+        SoundPlayed = null;
     }
 }

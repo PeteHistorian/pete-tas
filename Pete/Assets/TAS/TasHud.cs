@@ -1355,23 +1355,40 @@ public class TasHud : MonoBehaviour
     private void VideoTab()
     {
         TasManager m = M;
-        GUILayout.Label("Plays the whole movie from the start at normal speed, with this panel hidden, for recording.", small);
+        GUILayout.Label("Plays the whole movie from the start with this panel hidden. Export saves it as a video file.", small);
         m.VideoShowInputs = GUILayout.Toggle(m.VideoShowInputs, " Show pressed buttons", toggle);
         m.VideoShowTimer = GUILayout.Toggle(m.VideoShowTimer, " Show frame counter", toggle);
         m.VideoShowRoute = GUILayout.Toggle(m.VideoShowRoute, " Show route line", toggle);
         m.VideoShowHitboxes = GUILayout.Toggle(m.VideoShowHitboxes, " Show hitboxes", toggle);
         m.VideoEndScreen = GUILayout.Toggle(m.VideoEndScreen, " Go to the end screen when finished", toggle);
-        m.VideoExportFrames = GUILayout.Toggle(m.VideoExportFrames, " Also save every frame as a picture (PNG)", toggle);
-        if(m.VideoExportFrames)
-        {
-            GUILayout.Label("Pictures go into the TAS Files folder. Turn them into a perfectly smooth 50 fps video with a tool like ffmpeg.", small);
-        }
         GUILayout.Space(6);
         if(GUILayout.Button("Play video from the start", button, GUILayout.Height(28)))
         {
             m.StartVideo();
         }
-        GUILayout.Label("Press Esc to stop. Recording software like OBS works best set to 50 or 60 fps.", small);
+        TasVideoExport ex = TasVideoExport.I;
+        bool busyExport = ex != null && (ex.Exporting || ex.Finishing);
+        GUI.enabled = !busyExport;
+        if(GUILayout.Button(busyExport ? "Saving the video..." : "Export video file (MP4 with sound)", button, GUILayout.Height(28)))
+        {
+            m.StartVideo(true);
+        }
+        GUI.enabled = true;
+        bool hasFfmpeg = TasVideoExport.FindFfmpeg() != null;
+        GUILayout.Label(hasFfmpeg
+            ? "Exports every frame at 50 fps, with the game's sound, using the size of this window. Make the window bigger (or Alt+Enter for fullscreen) first for a sharper video. It plays faster than normal while it saves."
+            : "ffmpeg isn't installed, so the export saves every frame as a picture plus a sound file instead of an MP4.", small);
+        GUILayout.BeginHorizontal();
+        if(GUILayout.Button("Open videos folder", button))
+        {
+            OpenFolder(TasVideoExport.VideoFolder);
+        }
+        GUILayout.EndHorizontal();
+        if(ex != null && ex.LastResult.Length > 0)
+        {
+            GUILayout.Label(ex.LastResult, small);
+        }
+        GUILayout.Label("Press Esc to stop playback or an export early.", small);
     }
 
     private void SettingsTab()
@@ -1447,7 +1464,7 @@ public class TasHud : MonoBehaviour
         TasManager m = M;
         if(m.CurrentMode == TasManager.Mode.VideoEndScreen)
         {
-            if(!m.VideoExportFrames)
+            if(!m.VideoExporting)
             {
                 GUI.Label(new Rect(8, vh - 22, 500, 20), "Press Esc to go back to the TAS editor.", small);
             }

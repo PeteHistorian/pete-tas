@@ -135,7 +135,15 @@ public class TasVisualTest : MonoBehaviour
         M.StopVideo();
         yield return WaitIdle();
 
-        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors);
+        // Export the whole (short) movie as a video file and wait until it's saved
+        M.VideoEndScreen = false;
+        M.StartVideo(true);
+        float started = Time.realtimeSinceStartup;
+        while(M.CurrentMode != TasManager.Mode.Video && Time.realtimeSinceStartup - started < 60f) yield return null;
+        while((M.CurrentMode == TasManager.Mode.Video || TasVideoExport.I.Exporting || TasVideoExport.I.Finishing) && Time.realtimeSinceStartup - started < 180f) yield return null;
+        string exportInfo = "export frames " + TasVideoExport.I.FramesWritten + ", file " + TasVideoExport.I.LastFile + ", result " + TasVideoExport.I.LastResult;
+
+        File.WriteAllText(Path.Combine(folder, "done.txt"), "ok, desync " + M.DesyncFrame + ", tick errors " + M.TickLockErrors + " | " + exportInfo);
         Application.Quit(0);
     }
 }

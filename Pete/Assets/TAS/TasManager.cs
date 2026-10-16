@@ -89,10 +89,9 @@ public class TasManager : MonoBehaviour
     public bool VideoShowHitboxes = false;
     public bool VideoShowTimer = true;
     public bool VideoEndScreen = true;
-    public bool VideoExportFrames = false;
-    public string VideoFramesFolder = "";
+    // True while video playback is being saved to a file (see TasVideoExport)
+    public bool VideoExporting;
     private int videoReturnFrame;
-    private int endScreenFrames;
 
     // ---------- Search ----------
     public TasSearch Search;
@@ -168,6 +167,7 @@ public class TasManager : MonoBehaviour
         root.AddComponent<TasHud>();
         root.AddComponent<TasDraw>();
         root.AddComponent<TasFreeCam>();
+        root.AddComponent<TasVideoExport>();
         SelfTestMode = HasArg("-tasSelfTest");
 #if UNITY_EDITOR
         SelfTestMode |= UnityEditor.SessionState.GetBool("PeteTAS.SelfTest", false);
@@ -233,7 +233,7 @@ public class TasManager : MonoBehaviour
             TasHooks.AllowFinishSceneLoad = false;
             SetFastMode(false);
             Time.timeScale = 1f;
-            Application.targetFrameRate = 50;
+            Application.targetFrameRate = VideoExporting ? -1 : 50;
         }
     }
 
@@ -367,13 +367,9 @@ public class TasManager : MonoBehaviour
         }
         if(CurrentMode == Mode.VideoEndScreen)
         {
-            if(VideoExportFrames && endScreenFrames < 150)
-            {
-                // Keep a few seconds of the end screen in the exported video
-                endScreenFrames++;
-                ScreenCapture.CaptureScreenshot(Path.Combine(VideoFramesFolder, "frame_" + (Frame + endScreenFrames).ToString("00000") + ".png"));
-            }
-            if(Input.GetKeyDown(KeyCode.Escape))
+            // When an export has recorded a few seconds of the end screen, go straight back to the editor
+            bool exportDone = VideoExporting && TasVideoExport.I != null && !TasVideoExport.I.Exporting;
+            if(exportDone || Input.GetKeyDown(KeyCode.Escape))
             {
                 ReturnFromVideo();
             }
@@ -599,10 +595,6 @@ public class TasManager : MonoBehaviour
         {
             FinishFrame = Frame;
             Say("Finished! Final time " + FormatTime(Player.TimerSeconds) + " (frame " + Frame + ").", 10f);
-        }
-        if(CurrentMode == Mode.Video && VideoExportFrames)
-        {
-            ScreenCapture.CaptureScreenshot(Path.Combine(VideoFramesFolder, "frame_" + Frame.ToString("00000") + ".png"));
         }
     }
 
@@ -1591,7 +1583,8 @@ public class TasManager : MonoBehaviour
 
     // ---------- Video playback ----------
 
-    public void StartVideo()
+    // export = also save the playback as a video file
+    public void StartVideo(bool export = false)
     {
         if(Busy || CurrentMode == Mode.Video)
         {
@@ -1602,20 +1595,22 @@ public class TasManager : MonoBehaviour
             Say("The movie is empty. Make some inputs first.");
             return;
         }
-        videoReturnFrame = Frame;
-        endScreenFrames = 0;
-        if(VideoExportFrames)
+        if(export && TasVideoExport.I != null && (TasVideoExport.I.Exporting || TasVideoExport.I.Finishing))
         {
-            VideoFramesFolder = Path.Combine(TasFolder, "Video Frames " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss"));
-            Directory.CreateDirectory(VideoFramesFolder);
+            Say("The last video is still being saved. Try again in a moment.");
+            return;
         }
+        videoReturnFrame = Frame;
+        VideoExporting = export;
         ReplayFromStart(0, () =>
         {
             TasHooks.AllowFinishSceneLoad = VideoEndScreen;
             SetMode(Mode.Video);
-            if(VideoExportFrames)
+            if(VideoExporting && TasVideoExport.I != null)
             {
-                ScreenCapture.CaptureScreenshot(Path.Combine(VideoFramesFolder, "frame_00000.png"));
+                // Run as fast as the computer can; every frame is still saved, the clock is the TAS's own
+                Application.targetFrameRate = -1;
+                TasVideoExport.I.Begin(MovieName);
             }
         });
     }
@@ -1633,14 +1628,21 @@ public class TasManager : MonoBehaviour
         }
         TasHooks.AllowFinishSceneLoad = false;
         SetMode(Mode.Paused);
-        if(VideoExportFrames)
+        EndExport();
+    }
+
+    private void EndExport()
+    {
+        if(VideoExporting && TasVideoExport.I != null)
         {
-            Say("Video frames saved in: " + VideoFramesFolder, 10f);
+            TasVideoExport.I.RequestStop();
         }
+        VideoExporting = false;
     }
 
     private void ReturnFromVideo()
     {
+        EndExport();
         TasHooks.AllowFinishSceneLoad = false;
         Time.timeScale = 0f;
         ReplayFromStart(videoReturnFrame);

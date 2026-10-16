@@ -24,6 +24,11 @@ public class AudioManager : MonoBehaviour
         }
         s.source.pitch = s.pitch + UnityEngine.Random.Range((-1) * s.pitchVariation, s.pitchVariation);
         s.source.Play();
+        // Lets the TAS tool's video export hear exactly when each sound starts (does nothing in normal play)
+        if(TasHooks.SoundPlayed != null)
+        {
+            TasHooks.SoundPlayed(s.source);
+        }
     }    
 
     private void Awake() 
