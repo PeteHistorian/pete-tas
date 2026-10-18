@@ -201,7 +201,7 @@ public class TasFreeCam : MonoBehaviour
 
         // Click the route to jump to that frame
         TasManager m = TasManager.I;
-        if(m != null && !m.Busy && !overUi && Input.GetMouseButtonDown(0) && (hud == null || !hud.PlacingLine))
+        if(m != null && !m.Busy && !overUi && Input.GetMouseButtonDown(0) && (hud == null || !hud.Placing))
         {
             Vector3 w = cam.ScreenToWorldPoint(mouse);
             Vector2 click = new Vector2(w.x, w.y);

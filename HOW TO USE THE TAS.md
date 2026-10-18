@@ -161,6 +161,31 @@ Limits: enemies are moved in a simple way. Walking enemies keep walking (and tur
   - **Jump timing** holds one direction and tries every jump start and hold length.
   - Each result has two buttons: **Ghost** shows it in the level, and **Apply** puts it into your movie. Applied results are checked with an exact replay straight away.
 
+## Sections and start points (build a fast run piece by piece)
+
+Everything here is in the **Sections** tab.
+
+**Start points** let you start working from any spot:
+- Go to a frame, type a name, and press **Save here**. The start point remembers the inputs that lead to that frame, so **Go** always puts everything back exactly as it was: Pete, his speed, the enemies, the timer, HP and orbs.
+- If your movie already leads there, Go just jumps to that frame. Otherwise the movie becomes the start point's inputs. Your old route is kept as a try, and Undo works.
+- Start points are saved in `TAS Files\Start points`.
+
+**Practice: put Pete somewhere.** Press **Put Pete somewhere (practice)** and click in the level. On the current frame, Pete is put there, standing still. It's saved in the movie, so replays and going back always do the same.
+- It isn't something the real game can do, so the top of the panel says **PRACTICE**, and an orange circle shows the spot.
+- **Undo it** (in the Sections tab) makes the movie a real run again.
+
+**Sections** are a stretch of the level between two gates:
+1. Type a name, press **New: up-down gates** (for a section that goes left or right) or **New: left-right gates** (for one that goes up or down).
+2. Click in the level where the section **starts**, then where it **ends**. The start gate has a little flag, and the end gate has a double bar.
+3. The tab shows how long your route takes from gate to gate, for example "Your route: 186.43 f (frames 412-598)".
+- **Work on it:** jumps to 20 frames before the start gate and puts the end gate in the Lines tab, so you can compare tries.
+- **Save version:** saves your route's inputs for that section. It tells you if it's your new best.
+- **Use best** (or **Use** next to any saved version): puts that version in on the frame where Pete crosses the start gate in your current run. It lines up however Pete got there. Afterwards it tells you if the section takes the same time as when it was saved. If Pete comes in at a different speed, it says so, because then the inputs may not work the same.
+- **Build the run:** goes through your route, and wherever Pete crosses a section's start gate, that section's best version goes in. Then the next section is lined up where Pete now reaches it, and so on. It says how many frames the whole run saved. Undo puts it all back.
+- Sections and their versions are saved in `TAS Files\Sections` (one folder per section). The **- / +** buttons make the gates shorter or longer, and **X** removes a section (its files are kept, renamed).
+
+A good way to use it: make a section for each room, improve one room at a time from a start point, save versions as they get faster, then press Build the run.
+
 ## Going back a frame
 
 To go back, the tool loads a savestate from just over half a second earlier and replays forward at top speed with the level hidden. While it does, the screen keeps showing the level as it was, so it doesn't flash. The same goes for Verify, loading a movie and the auto-search.

@@ -349,7 +349,7 @@ public class TasManager : MonoBehaviour
         }
         if(mouseClickState == 0)
         {
-            bool onPanel = TasHud.I != null && (TasHud.I.PointerOverUi(Input.mousePosition) || TasHud.I.PlacingLine);
+            bool onPanel = TasHud.I != null && (TasHud.I.PointerOverUi(Input.mousePosition) || TasHud.I.Placing);
             bool freeCam = TasFreeCam.I != null && TasFreeCam.I.Active;
             mouseClickState = onPanel || freeCam ? 2 : 1;
         }
@@ -553,6 +553,10 @@ public class TasManager : MonoBehaviour
 
     private void AfterTick()
     {
+        if(Movie.TeleportFrame >= 1 && Frame == Movie.TeleportFrame && Player != null && Player.Valid)
+        {
+            ApplyTeleport(Movie.TeleportTo);
+        }
         if(CurrentMode == Mode.Searching)
         {
             if(Search != null)
@@ -1486,15 +1490,25 @@ public class TasManager : MonoBehaviour
     // The first frame whose input is different, or -1 if every input is the same
     public static int FirstDifference(TasMovie a, TasMovie b)
     {
+        int first = -1;
         int n = Math.Max(a.Length, b.Length);
         for(int f = 1; f <= n; f++)
         {
             if(a.Get(f) != b.Get(f))
             {
-                return f;
+                first = f;
+                break;
             }
         }
-        return -1;
+        if(!a.SameTeleport(b))
+        {
+            // A practice move changes everything from the end of its frame
+            foreach(int t in new[] { a.TeleportFrame, b.TeleportFrame })
+            {
+                if(t >= 1 && (first < 0 || t < first)) first = t;
+            }
+        }
+        return first;
     }
 
     // ---------- Copy, paste and presets ----------
@@ -1659,6 +1673,62 @@ public class TasManager : MonoBehaviour
         }
         AddGhost(g);
         return g;
+    }
+
+    // ---------- Practice: put Pete somewhere ----------
+
+    // At the end of the current frame Pete is put at "to", standing still. It's saved in the movie, so replays and
+    // going back always do the same. Only for practice: it isn't something the real game can do.
+    public void SetPracticeTeleport(Vector2 to)
+    {
+        if(Busy || CurrentMode == Mode.Video || CurrentMode == Mode.VideoEndScreen)
+        {
+            return;
+        }
+        if(CurrentMode == Mode.Playing)
+        {
+            SetMode(Mode.Paused);
+        }
+        int at = Frame;
+        if(at < 1)
+        {
+            Say("Step forward one frame first (Pete can be moved from frame 1 on).");
+            return;
+        }
+        Remember("move Pete (practice) on frame " + at);
+        int first = Movie.TeleportFrame >= 1 ? Mathf.Min(Movie.TeleportFrame, at) : at;
+        InvalidateFrom(first, true);
+        Movie.TeleportFrame = at;
+        Movie.TeleportTo = to;
+        MovieDirty = true;
+        Say("PRACTICE: Pete is put at " + to.x.ToString("0.00") + ", " + to.y.ToString("0.00") + " on frame " + at + ". This movie is now a practice run (the TAS shows PRACTICE at the top).", 8f);
+        Seek(at, null, true);
+    }
+
+    public void ClearPracticeTeleport()
+    {
+        if(Busy || Movie.TeleportFrame < 1)
+        {
+            return;
+        }
+        Remember("stop moving Pete (practice)");
+        int at = Movie.TeleportFrame;
+        int keep = Frame;
+        InvalidateFrom(at, true);
+        Movie.TeleportFrame = -1;
+        MovieDirty = true;
+        Say("Pete isn't moved any more: this movie is a real run again.");
+        ResimulateTo(keep, at);
+    }
+
+    public void ApplyTeleport(Vector2 to)
+    {
+        Rigidbody2D rb = Player.Rb;
+        Transform t = Player.Go.transform;
+        t.position = new Vector3(to.x, to.y, t.position.z);
+        rb.position = to;
+        rb.velocity = Vector2.zero;
+        Physics2D.SyncTransforms();
     }
 
     // Makes an older try your current route again. The route you have now is kept as a try, so nothing is lost

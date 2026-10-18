@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using UnityEngine;
 using Buttons = PeteInput.Buttons;
 
 // The list of inputs for every frame of the TAS, plus marker labels.
@@ -11,6 +12,15 @@ public class TasMovie
 {
     private readonly List<Buttons> frames = new List<Buttons> { Buttons.None };
     public readonly SortedDictionary<int, string> Markers = new SortedDictionary<int, string>();
+    // Practice only: at the end of this frame Pete is put at TeleportTo, standing still (-1 = never).
+    // It's part of the movie, so replays and going back always do it the same way.
+    public int TeleportFrame = -1;
+    public Vector2 TeleportTo;
+
+    public bool IsPractice
+    {
+        get { return TeleportFrame >= 1; }
+    }
 
     // Number of the last frame that has an input.
     public int Length
@@ -62,6 +72,7 @@ public class TasMovie
         }
         frames.RemoveAt(frame);
         Markers.Remove(frame);
+        if(TeleportFrame == frame) TeleportFrame = -1;
         ShiftMarkers(frame + 1, -1);
     }
 
@@ -104,6 +115,7 @@ public class TasMovie
         {
             Markers.Remove(f);
         }
+        if(TeleportFrame >= frame && TeleportFrame < frame + count) TeleportFrame = -1;
         ShiftMarkers(frame + count, -count);
     }
 
@@ -127,6 +139,7 @@ public class TasMovie
         {
             frames.RemoveRange(frame + 1, frames.Count - frame - 1);
         }
+        if(TeleportFrame > frame) TeleportFrame = -1;
     }
 
     public void Clear()
@@ -134,6 +147,7 @@ public class TasMovie
         frames.Clear();
         frames.Add(Buttons.None);
         Markers.Clear();
+        TeleportFrame = -1;
     }
 
     public TasMovie Clone()
@@ -145,11 +159,17 @@ public class TasMovie
         {
             copy.Markers[m.Key] = m.Value;
         }
+        copy.TeleportFrame = TeleportFrame;
+        copy.TeleportTo = TeleportTo;
         return copy;
     }
 
     public bool SameInputs(TasMovie other)
     {
+        if(!SameTeleport(other))
+        {
+            return false;
+        }
         int n = Math.Max(Length, other.Length);
         for(int f = 1; f <= n; f++)
         {
@@ -161,8 +181,22 @@ public class TasMovie
         return true;
     }
 
+    public bool SameTeleport(TasMovie other)
+    {
+        if(TeleportFrame < 1 && other.TeleportFrame < 1)
+        {
+            return true;
+        }
+        return TeleportFrame == other.TeleportFrame && TeleportTo == other.TeleportTo;
+    }
+
     private void ShiftMarkers(int fromFrame, int delta)
     {
+        if(TeleportFrame >= fromFrame)
+        {
+            TeleportFrame += delta;
+            if(TeleportFrame < 1) TeleportFrame = -1;
+        }
         List<KeyValuePair<int, string>> moved = new List<KeyValuePair<int, string>>();
         foreach(var m in Markers)
         {
@@ -218,6 +252,13 @@ public class TasMovie
         {
             sb.Append("#marker ").Append(m.Key.ToString(CultureInfo.InvariantCulture)).Append(' ').AppendLine(m.Value);
         }
+        if(TeleportFrame >= 1)
+        {
+            sb.AppendLine("# PRACTICE: on this frame Pete is put somewhere else (not a real run)");
+            sb.Append("#teleport ").Append(TeleportFrame.ToString(CultureInfo.InvariantCulture)).Append(' ')
+              .Append(TeleportTo.x.ToString("R", CultureInfo.InvariantCulture)).Append(' ')
+              .AppendLine(TeleportTo.y.ToString("R", CultureInfo.InvariantCulture));
+        }
         int f = 1;
         while(f <= Length)
         {
@@ -258,6 +299,20 @@ public class TasMovie
                     if(int.TryParse(num, NumberStyles.Integer, CultureInfo.InvariantCulture, out markerFrame))
                     {
                         movie.Markers[markerFrame] = space < 0 ? "" : rest.Substring(space + 1).Trim();
+                    }
+                    continue;
+                }
+                if(t.StartsWith("#teleport", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] tp = t.Substring(9).Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    int tf;
+                    float tx, ty;
+                    if(tp.Length >= 3 && int.TryParse(tp[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out tf)
+                        && float.TryParse(tp[1], NumberStyles.Float, CultureInfo.InvariantCulture, out tx)
+                        && float.TryParse(tp[2], NumberStyles.Float, CultureInfo.InvariantCulture, out ty))
+                    {
+                        movie.TeleportFrame = tf;
+                        movie.TeleportTo = new Vector2(tx, ty);
                     }
                     continue;
                 }

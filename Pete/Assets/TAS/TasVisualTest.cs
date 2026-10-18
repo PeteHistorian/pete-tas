@@ -87,6 +87,23 @@ public class TasVisualTest : MonoBehaviour
         TasHud.I.ShowTab("Ghosts");
         yield return Shot("ghosts-tab");
 
+        // Sections: a section between two gates with a saved version, shown in the Sections tab
+        {
+            List<TasSection> userSections = new List<TasSection>(TasSections.All);
+            TasSections.All.Clear();
+            M.Seek(150);
+            yield return WaitIdle();
+            TasSection vs = TasSections.Create("Visual test", true, M.Timeline[60].Pos, M.Timeline[130].Pos);
+            TasSections.SaveVersion(vs);
+            M.Seek(120);
+            yield return WaitIdle();
+            TasHud.I.ShowTab("Sections");
+            yield return Shot("sections-tab");
+            TasSections.All.Clear();
+            TasSections.All.AddRange(userSections);
+            try { Directory.Delete(vs.Folder, true); } catch { }
+        }
+
         // Center camera, plus a selection in the input grid and the presets list
         TasHud.I.Select(100, 110);
         TasHud.I.ShowTab("Movie");

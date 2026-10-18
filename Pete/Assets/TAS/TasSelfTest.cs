@@ -394,6 +394,9 @@ public class TasSelfTest : MonoBehaviour
             Check(M.DesyncFrame < 0, "After going back to a try, an exact replay agrees (desync " + M.DesyncFrame + ")");
         }
 
+        // 3h. Sections, start points and practice moves
+        yield return SectionsTest(last);
+
         // 3f. The game camera is exactly where the game would have it, however you got to the frame
         yield return CameraTest(last, false);
 
@@ -917,6 +920,138 @@ public class TasSelfTest : MonoBehaviour
         }
         Log("Will you get hit: real hits in the run " + realHits + ", starts checked " + starts + ", warnings shown " + warned);
         Check(starts > 0 && right == starts && (warned > 0 || realHits == 0), "\"Will you get hit?\" is right from every frame checked: it warns exactly when, and only when, the real game takes HP (" + right + " of " + starts + " starts, " + warned + " with a warning)");
+    }
+
+    private IEnumerator SectionsTest(int last)
+    {
+        TasMovie original = M.Movie.Clone();
+        string originalName = M.MovieName;
+        M.Seek(Mathf.Min(last, 700));
+        yield return WaitIdle();
+        // Only the test's own section takes part (any sections saved in TAS Files are put back afterwards)
+        List<TasSection> userSections = new List<TasSection>(TasSections.All);
+        TasSections.All.Clear();
+        // A section from about frame 150 to about frame 260 of the route
+        Vector2 a0 = M.Timeline[149].Pos, a1 = M.Timeline[150].Pos, b0 = M.Timeline[259].Pos, b1 = M.Timeline[260].Pos;
+        bool vertical = Mathf.Abs(a1.x - a0.x) >= Mathf.Abs(a1.y - a0.y);
+        TasSection s = TasSections.Create("selftest section", vertical, (a0 + a1) * 0.5f, (b0 + b1) * 0.5f);
+        TasSections.Measure(s);
+        float t1 = s.Time;
+        int first1 = s.FirstFrame;
+        Log("Section: crosses the start on " + s.StartCross.ToString("0.00") + ", the end on " + s.EndCross.ToString("0.00") + ", takes " + t1.ToString("0.00") + " frames");
+        TasSections.SaveVersion(s);
+        TasSectionVersion v = s.Best;
+        Check(t1 > 0f && v != null && Mathf.Abs(v.Frames - t1) < 0.0001f && v.Inputs.Count == s.LastFrame - s.FirstFrame + 1, "A section between two gates is timed and its version saved (" + t1.ToString("0.00") + " frames, " + (v != null ? v.Inputs.Count : 0) + " inputs)");
+
+        // Break the section (nothing held through it), then put the saved version back: exactly the same time again
+        Dictionary<int, Buttons> blank = new Dictionary<int, Buttons>();
+        for(int f = s.FirstFrame; f <= s.LastFrame; f++) blank[f] = Buttons.None;
+        M.SetInputs(blank);
+        yield return WaitIdle();
+        M.Seek(Mathf.Min(M.Movie.Length, 700));
+        yield return WaitIdle();
+        TasSections.Measure(s);
+        float broken = s.Time;
+        string backText = "";
+        TasSections.UseVersion(s, v, text => backText = text);
+        yield return WaitIdle();
+        TasSections.Measure(s);
+        Check(s.FirstFrame == first1 && TasSections.SameRange(M.Movie, first1, v.Inputs) && Mathf.Abs(s.Time - t1) < 0.005f, "\"Use\" puts a saved version back exactly: " + (broken >= 0f ? broken.ToString("0.00") : "not finishing") + " with nothing held, " + (s.Time >= 0f ? s.Time.ToString("0.00") : "-") + " with the version (saved " + t1.ToString("0.00") + ")");
+        M.ReplaceMovie(original.Clone(), originalName, Mathf.Min(original.Length, 700));
+        yield return WaitIdle();
+
+        // Make Pete arrive later: stand still for a few frames earlier on, without moving the section's inputs
+        Dictionary<int, Buttons> idle = new Dictionary<int, Buttons>();
+        for(int f = first1 - 60; f < first1 - 54; f++) idle[f] = Buttons.None;
+        M.SetInputs(idle);
+        yield return WaitIdle();
+        M.Seek(Mathf.Min(M.Movie.Length, 700));
+        yield return WaitIdle();
+        TasSections.Measure(s);
+        float t2 = s.Time;
+        int first2 = s.FirstFrame;
+        Log("After standing still earlier: the route enters the section on frame " + first2 + " (was " + first1 + "), it takes " + (t2 >= 0f ? t2.ToString("0.00") : "-") + " frames with the old inputs where they were");
+        string result = "";
+        if(first2 > 0)
+        {
+            TasSections.UseVersion(s, v, text => result = text);
+            yield return WaitIdle();
+            TasSections.Measure(s);
+            bool placed = TasSections.SameRange(M.Movie, s.FirstFrame, v.Inputs);
+            Log("Use version: " + result);
+            Check(placed && s.FirstFrame == first2, "\"Use\" puts a saved version in exactly where Pete now crosses the start gate (frame " + s.FirstFrame + ", was " + first1 + ")");
+            bool same = s.Time >= 0f && Mathf.Abs(s.Time - t1) < 0.005f;
+            Check(same || result.Contains("comes in at"), "Lined up there, the section takes the same time, or the tool says Pete came in differently (" + (s.Time >= 0f ? s.Time.ToString("0.00") : "doesn't finish") + " vs " + t1.ToString("0.00") + (same ? "" : ", warned") + ")");
+        }
+        else
+        {
+            Check(false, "After standing still earlier, Pete still crosses the start gate");
+        }
+        M.ReplaceMovie(original.Clone(), originalName, Mathf.Min(original.Length, 700));
+        yield return WaitIdle();
+
+        // Building the run with only the route's own version changes nothing
+        int lengthBefore = M.Movie.Length;
+        TasSections.BuildRun();
+        float waited = 0f;
+        while((TasSections.Building || !M.IsIdle) && waited < 120f)
+        {
+            waited += Time.unscaledDeltaTime;
+            yield return null;
+        }
+        Check(M.Movie.SameInputs(original) && M.Movie.Length == lengthBefore, "Build the run with the route's own best version leaves it as it was (" + TasSections.LastBuild.Replace("\n", " ") + ")");
+        TasSections.All.Clear();
+        TasSections.All.AddRange(userSections);
+        try { System.IO.Directory.Delete(s.Folder, true); } catch(Exception ex) { Log("  couldn't remove the test section: " + ex.Message); }
+
+        // Start points: save one, start an empty movie, go back to it: everything is as it was
+        M.Seek(300);
+        yield return WaitIdle();
+        Vector2 pos300 = M.Player.Position;
+        ulong print300 = M.Timeline[300].Fingerprint;
+        TasSections.SaveStartPoint("selftest start");
+        M.NewMovie();
+        yield return WaitIdle();
+        TasSections.RefreshStartPoints(true);
+        TasStartPoint sp = TasSections.StartPoints.Find(x => x.Name == "selftest start");
+        if(sp != null)
+        {
+            TasSections.GoTo(sp);
+            yield return WaitIdle();
+        }
+        Check(sp != null && M.Frame == 300 && M.Player.Position == pos300 && M.Timeline.Count > 300 && M.Timeline[300].Fingerprint == print300, "A start point brings back frame 300 exactly, even from an empty movie (frame " + M.Frame + ")");
+        if(sp != null)
+        {
+            try { System.IO.File.Delete(sp.File); } catch { }
+            TasSections.RefreshStartPoints(true);
+        }
+
+        // Practice: put Pete somewhere; replays and going back do it the same way every time
+        M.ReplaceMovie(original.Clone(), originalName, 120);
+        yield return WaitIdle();
+        Vector2 to = M.Player.Position + new Vector2(0f, 1.5f);
+        M.SetPracticeTeleport(to);
+        yield return WaitIdle();
+        bool moved = M.Movie.IsPractice && M.Frame == 120 && (M.Player.Position - to).sqrMagnitude < 1e-8f;
+        M.Seek(160);
+        yield return WaitIdle();
+        Vector2 at160 = M.Player.Position;
+        M.DesyncFrame = -1;
+        M.Verify();
+        yield return WaitIdle();
+        bool replayed = M.DesyncFrame < 0 && M.Player.Position == at160;
+        M.Seek(110);
+        yield return WaitIdle();
+        M.Seek(160);
+        yield return WaitIdle();
+        bool back = M.DesyncFrame < 0 && M.Player.Position == at160;
+        TasMovie round = TasMovie.FromText(M.Movie.ToText());
+        Check(moved && replayed && back && round.TeleportFrame == 120 && round.TeleportTo == to, "Practice: Pete is put where you click, and replays, going back and the movie file all do it the same (moved " + moved + ", replay " + replayed + ", back " + back + ")");
+        M.ClearPracticeTeleport();
+        yield return WaitIdle();
+        Check(!M.Movie.IsPractice && M.Movie.SameInputs(original), "Undo it: the movie is a real run again");
+        M.ReplaceMovie(original.Clone(), originalName, Mathf.Min(original.Length, last));
+        yield return WaitIdle();
     }
 
     private readonly List<int> badFrames = new List<int>();

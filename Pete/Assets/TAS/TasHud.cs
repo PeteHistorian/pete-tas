@@ -12,7 +12,7 @@ public class TasHud : MonoBehaviour
     public static TasHud I;
     public bool Hidden;
 
-    private enum Tab { Movie, Ghosts, Lines, Search, Video, Settings, Help }
+    private enum Tab { Movie, Ghosts, Lines, Sections, Search, Video, Settings, Help }
     private Tab tab = Tab.Help;
 
     private const float RefHeight = 900f;
@@ -81,6 +81,18 @@ public class TasHud : MonoBehaviour
 
     // Lines tab / placing
     public bool PlacingLine;
+    // Sections: 1 = waiting for the start gate click, 2 = waiting for the end gate click
+    private int placingSection;
+    private bool placingSectionVertical = true;
+    public TasLine PendingGate;
+    // Practice: the next click in the level puts Pete there
+    public bool PlacingPete;
+
+    // Waiting for a click in the level (so that click isn't an attack or a jump to a frame)
+    public bool Placing
+    {
+        get { return PlacingLine || placingSection > 0 || PlacingPete; }
+    }
     public bool PlacingVertical = true;
 
     // Search tab
@@ -208,7 +220,13 @@ public class TasHud : MonoBehaviour
 
         if(Input.GetKeyDown(KeyCode.Escape))
         {
-            if(PlacingLine) PlacingLine = false;
+            if(Placing)
+            {
+                PlacingLine = false;
+                placingSection = 0;
+                PendingGate = null;
+                PlacingPete = false;
+            }
             else if(HasSelection) ClearSelection();
             else if(M.CurrentMode == TasManager.Mode.Video || M.CurrentMode == TasManager.Mode.VideoEndScreen) M.StopVideo();
             else if(M.CurrentMode == TasManager.Mode.Searching) M.CancelSearch();
@@ -263,6 +281,46 @@ public class TasHud : MonoBehaviour
                 M.Say("Placed " + line.Name + ". The Lines tab shows which route reaches it first.");
             }
         }
+        else if((placingSection > 0 || PlacingPete) && Input.GetMouseButtonDown(0) && !PointerOverUi(Input.mousePosition))
+        {
+            Camera cam = Camera.main;
+            if(cam != null)
+            {
+                Vector3 w3 = cam.ScreenToWorldPoint(Input.mousePosition);
+                Vector2 w = new Vector2(w3.x, w3.y);
+                if(PlacingPete)
+                {
+                    PlacingPete = false;
+                    M.SetPracticeTeleport(w);
+                }
+                else if(placingSection == 1)
+                {
+                    PendingGate = new TasLine();
+                    PendingGate.Vertical = placingSectionVertical;
+                    PendingGate.Center = w;
+                    placingSection = 2;
+                }
+                else
+                {
+                    TasSection s = TasSections.Create(sectionName, placingSectionVertical, PendingGate.Center, w);
+                    PendingGate = null;
+                    placingSection = 0;
+                    sectionName = "";
+                    TasSections.Measure(s);
+                    M.Say("Made the section \"" + s.Name + "\". " + (s.Time >= 0f ? "Your route takes " + TasSections.FramesText(s.Time) + " through it. " : "") + "Save a version of it in the Sections tab.", 7f);
+                }
+            }
+        }
+    }
+
+    private void StartPlacingSection(bool vertical)
+    {
+        placingSection = 1;
+        placingSectionVertical = vertical;
+        PendingGate = null;
+        PlacingLine = false;
+        PlacingPete = false;
+        TasSections.ShowGates = true;
     }
 
     private void StepKey(KeyCode key, int amount, bool forward)
@@ -562,6 +620,215 @@ public class TasHud : MonoBehaviour
         GUI.color = old;
     }
 
+    // The name of each section next to its gates
+    private void DrawGateLabels()
+    {
+        if(!TasSections.ShowGates || Event.current.type != EventType.Repaint)
+        {
+            return;
+        }
+        Camera cam = Camera.main;
+        if(cam == null)
+        {
+            return;
+        }
+        Rect open = OpenArea();
+        foreach(TasSection s in TasSections.All)
+        {
+            GateLabel(cam, open, s.Start, s.Name + " start", s.Color);
+            GateLabel(cam, open, s.End, s.Name + " end", s.Color);
+        }
+        if(PendingGate != null)
+        {
+            GateLabel(cam, open, PendingGate, "start (now click the end)", Color.white);
+        }
+    }
+
+    private void GateLabel(Camera cam, Rect open, TasLine g, string text, Color c)
+    {
+        Vector3 sp = cam.WorldToScreenPoint(new Vector3(g.B.x, g.B.y, 0f));
+        Vector2 at = new Vector2(sp.x, Screen.height - sp.y);
+        if(!open.Contains(at))
+        {
+            return;
+        }
+        GUIContent content = new GUIContent(text);
+        Vector2 size = tag.CalcSize(content);
+        Rect r = new Rect(at.x / scale - size.x * 0.5f - 3f, at.y / scale - size.y - 6f, size.x + 6f, size.y);
+        Color old = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.72f);
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        GUI.color = old;
+        tag.normal.textColor = c;
+        GUI.Label(r, content, tag);
+    }
+
+    // ---------------------------------------------------------------
+    //  Sections tab: start points, sections between two gates, and putting the best ones together
+    // ---------------------------------------------------------------
+    private string startName = "";
+    private string sectionName = "";
+    private Vector2 sectionScroll;
+    private TasSection openSection;
+
+    private void SectionsTab()
+    {
+        TasManager m = M;
+        TasSections.RefreshStartPoints();
+        Action later = null;
+        sectionScroll = GUILayout.BeginScrollView(sectionScroll);
+
+        GUILayout.Label("START POINTS (start working from any spot)", header);
+        GUILayout.BeginHorizontal();
+        startName = GUILayout.TextField(startName, 40, field);
+        if(GUILayout.Button(new GUIContent("Save here", "Save frame " + m.Frame + " as a start point (type a name first)"), button, GUILayout.Width(84)))
+        {
+            TasSections.SaveStartPoint(startName.Trim());
+            startName = "";
+            GUIUtility.keyboardControl = 0;
+        }
+        GUILayout.EndHorizontal();
+        foreach(TasStartPoint sp in TasSections.StartPoints)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(sp.Name + "  <color=#888888>frame " + sp.Frame + (sp.Practice ? ", practice" : "") + "</color>", small);
+            GUILayout.FlexibleSpace();
+            TasStartPoint go = sp;
+            if(GUILayout.Button(new GUIContent("Go", "Start from here: everything is exactly as it was on that frame"), button, GUILayout.Width(40))) later = () => TasSections.GoTo(go);
+            if(GUILayout.Button(new GUIContent("X", "Remove this start point"), button, GUILayout.Width(24))) later = () => TasSections.DeleteStartPoint(go);
+            GUILayout.EndHorizontal();
+        }
+        if(TasSections.StartPoints.Count == 0)
+        {
+            GUILayout.Label("No start points yet. Go to a frame, type a name and press Save here.", small);
+        }
+        if(GUILayout.Button(new GUIContent(PlacingPete ? "Click in the level where Pete should be (Esc cancels)" : "Put Pete somewhere (practice)", "Practice only: on this frame Pete is put where you click, standing still"), button))
+        {
+            PlacingPete = !PlacingPete;
+            placingSection = 0;
+            PendingGate = null;
+            PlacingLine = false;
+        }
+        if(m.Movie.IsPractice)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("<color=#ffa050>PRACTICE: Pete is put somewhere on frame " + m.Movie.TeleportFrame + ".</color>", small);
+            if(GUILayout.Button(new GUIContent("Undo it", "Stop moving Pete: a real run again"), button, GUILayout.Width(64))) later = () => m.ClearPracticeTeleport();
+            GUILayout.EndHorizontal();
+        }
+
+        GUILayout.Space(8);
+        GUILayout.Label("SECTIONS (click twice in the level: where it starts, then where it ends)", header);
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Name", small, GUILayout.Width(36));
+        sectionName = GUILayout.TextField(sectionName, 40, field);
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
+        if(GUILayout.Button(new GUIContent("New: up-down gates", "For a section that goes left or right"), button)) StartPlacingSection(true);
+        if(GUILayout.Button(new GUIContent("New: left-right gates", "For a section that goes up or down"), button)) StartPlacingSection(false);
+        GUILayout.EndHorizontal();
+        TasSections.ShowGates = GUILayout.Toggle(TasSections.ShowGates, " Show the gates in the level", toggle);
+
+        foreach(TasSection s in TasSections.All)
+        {
+            TasSections.Measure(s);
+            TasSection sec = s;
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            Color oldC = GUI.color;
+            GUI.color = s.Color;
+            GUILayout.Label("■", label, GUILayout.Width(14));
+            GUI.color = oldC;
+            GUILayout.Label(s.Name, bold);
+            GUILayout.FlexibleSpace();
+            if(GUILayout.Button(new GUIContent("-", "Make the gates shorter"), button, GUILayout.Width(22))) later = () => TasSections.Resize(sec, -0.5f);
+            if(GUILayout.Button(new GUIContent("+", "Make the gates longer"), button, GUILayout.Width(22))) later = () => TasSections.Resize(sec, 0.5f);
+            if(GUILayout.Button(new GUIContent("X", "Remove this section (its files are kept, renamed)"), button, GUILayout.Width(24))) later = () => TasSections.Delete(sec);
+            GUILayout.EndHorizontal();
+            string now = s.StartCross < 0f ? "Your route doesn't reach its start gate."
+                : s.EndCross < 0f ? "Your route enters it on frame " + s.FirstFrame + " but doesn't reach the end gate yet."
+                : "Your route: <b>" + TasSections.FramesText(s.Time) + "</b> (frames " + s.FirstFrame + "-" + s.LastFrame + ")";
+            GUILayout.Label("   " + now, small);
+            TasSectionVersion best = s.Best;
+            if(best != null)
+            {
+                string cmp = "";
+                if(s.Time >= 0f)
+                {
+                    float d = s.Time - best.Frames;
+                    cmp = Mathf.Abs(d) < 0.005f ? "  (that's your route)" : d > 0 ? "  <color=#80ff90>(" + TasSections.FramesText(d) + " faster than your route)</color>" : "  <color=#ffd060>(your route is " + TasSections.FramesText(-d) + " faster: save it!)</color>";
+                }
+                GUILayout.Label("   Best saved: <b>" + TasSections.FramesText(best.Frames) + "</b>" + cmp, small);
+            }
+            GUILayout.BeginHorizontal();
+            if(GUILayout.Button(new GUIContent("Work on it", "Go to just before the start gate. The end gate is added to the Lines tab so you can compare tries"), button)) later = () => WorkOnSection(sec);
+            if(GUILayout.Button(new GUIContent("Save version", "Save your route's inputs for this section"), button)) later = () => TasSections.SaveVersion(sec);
+            if(best != null && GUILayout.Button(new GUIContent("Use best", "Put the best saved version in where your route crosses the start gate"), button)) later = () => TasSections.UseVersion(sec, sec.Best);
+            GUILayout.EndHorizontal();
+            if(s.Versions.Count > 0)
+            {
+                bool open = openSection == s;
+                if(GUILayout.Button((open ? "Hide" : "Show") + " saved versions (" + s.Versions.Count + ")", small))
+                {
+                    openSection = open ? null : s;
+                }
+                if(open)
+                {
+                    foreach(TasSectionVersion v in s.Versions)
+                    {
+                        TasSectionVersion ver = v;
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label("      " + TasSections.FramesText(v.Frames) + "  <color=#888888>" + v.Inputs.Count + " inputs, from " + v.FromMovie + (v.Practice ? ", practice" : "") + "</color>", small);
+                        GUILayout.FlexibleSpace();
+                        if(GUILayout.Button(new GUIContent("Use", "Put this version in where your route crosses the start gate"), button, GUILayout.Width(40))) later = () => TasSections.UseVersion(sec, ver);
+                        if(GUILayout.Button(new GUIContent("X", "Remove this version (the file is kept, renamed)"), button, GUILayout.Width(24))) later = () => TasSections.DeleteVersion(sec, ver);
+                        GUILayout.EndHorizontal();
+                    }
+                }
+            }
+        }
+        if(TasSections.All.Count == 0)
+        {
+            GUILayout.Label("No sections yet. Click \"New\", then click in the level where it starts and where it ends.", small);
+        }
+        else
+        {
+            GUILayout.Space(6);
+            if(GUILayout.Button(new GUIContent("Build the run: best version of every section", "Goes through your route: wherever Pete crosses a section's start gate, its best version goes in. Undo puts it all back."), button, GUILayout.Height(26)))
+            {
+                later = () => TasSections.BuildRun();
+            }
+            if(TasSections.LastBuild.Length > 0)
+            {
+                GUILayout.Label(TasSections.LastBuild, small);
+            }
+        }
+        GUILayout.EndScrollView();
+        if(later != null && !m.Busy)
+        {
+            later();
+        }
+    }
+
+    // Jumps to just before a section's start gate, and puts its end gate in the Lines tab
+    private void WorkOnSection(TasSection s)
+    {
+        TasManager m = M;
+        TasSections.Measure(s);
+        if(!m.Lines.Contains(s.End))
+        {
+            m.Lines.Add(s.End);
+            m.RouteVersion++;
+        }
+        if(s.StartCross < 0f)
+        {
+            m.Say("Your route doesn't reach the start of " + s.Name + " yet. Play up to it (or use a start point), then press Work on it again.", 7f);
+            return;
+        }
+        m.Seek(Mathf.Max(0, s.FirstFrame - 21));
+        m.Say("Working on " + s.Name + ": you're 20 frames before its start gate. Its end gate is in the Lines tab, so you can compare tries. Save version when it's faster.", 8f);
+    }
+
     // "Will you get hit?": a warning when your inputs get Pete hit soon, or an all-clear when they don't
     private void DrawHitWarning()
     {
@@ -615,7 +882,8 @@ public class TasHud : MonoBehaviour
         GUIContent content = new GUIContent(text);
         Vector2 size = msg.CalcSize(content);
         float w = Mathf.Min(size.x + 20f, open.width / scale - 16f);
-        Rect r = new Rect(open.x / scale + (open.width / scale - w) * 0.5f, 74f, w, size.y + 8f);
+        float y = 74f + (Placing ? 30f : 0f) + (TasFreeCam.I != null && TasFreeCam.I.Active ? 30f : 0f);
+        Rect r = new Rect(open.x / scale + (open.width / scale - w) * 0.5f, y, w, size.y + 8f);
         if(Event.current.type == EventType.Repaint)
         {
             Color old = GUI.color;
@@ -767,6 +1035,7 @@ public class TasHud : MonoBehaviour
         }
 
         DrawHitWarning();
+        DrawGateLabels();
 
         float leftW = 336f;
         DrawStatus(new Rect(8, 8, leftW, 398));
@@ -780,15 +1049,19 @@ public class TasHud : MonoBehaviour
             DrawGraph(new Rect(gx, vh - 158, gw, 150));
         }
         DrawMessage(new Rect(gx, 8, Mathf.Max(200, gw), 60));
-        if(PlacingLine)
+        if(Placing)
         {
             Rect r = new Rect(gx, 72, Mathf.Max(200, gw), 26);
             GUI.Box(r, "", box);
-            GUI.Label(r, "Click in the level to place the line (" + (PlacingVertical ? "up-down" : "left-right") + "). Esc cancels.", msg);
+            string what = PlacingLine ? "Click in the level to place the line (" + (PlacingVertical ? "up-down" : "left-right") + ")."
+                : PlacingPete ? "PRACTICE: click in the level where Pete should be (he's put there on frame " + M.Frame + ")."
+                : placingSection == 1 ? "Click where the section STARTS (" + (placingSectionVertical ? "an up-down" : "a left-right") + " gate goes there)."
+                : "Now click where the section ENDS.";
+            GUI.Label(r, what + " Esc cancels.", msg);
         }
         if(TasFreeCam.I != null && TasFreeCam.I.Active)
         {
-            Rect r = new Rect(gx, PlacingLine ? 102 : 72, Mathf.Max(200, gw), 26);
+            Rect r = new Rect(gx, Placing ? 102 : 72, Mathf.Max(200, gw), 26);
             GUI.Box(r, "", box);
             GUI.Label(r, "Free camera: scroll to zoom, right-drag to move, click the route to jump there. M to exit.", msg);
         }
@@ -820,6 +1093,10 @@ public class TasHud : MonoBehaviour
         GUILayout.BeginHorizontal();
         GUILayout.Label("<b>PETE TAS</b>  " + Light(m) + " <size=11>" + VerifyText(m) + "</size>", label);
         GUILayout.FlexibleSpace();
+        if(m.Movie.IsPractice)
+        {
+            GUILayout.Label(new GUIContent("<color=#ffa050><b>PRACTICE</b></color>", "Pete is put somewhere on frame " + m.Movie.TeleportFrame + ", so this isn't a real run (Sections tab)"), small);
+        }
         GUILayout.Label(ModeText(m), small);
         GUILayout.EndHorizontal();
 
@@ -1489,24 +1766,26 @@ public class TasHud : MonoBehaviour
     private void DrawTabs(Rect r)
     {
         Area(r);
-        string[] names = { "Movie", "View", "Lines", "Search", "Video", "Setup", "Help" };
-        float tw = (r.width - 12) / names.Length;
+        string[] names = { "Movie", "View", "Lines", "Sections", "Search", "Video", "Setup", "Help" };
+        const int perRow = 4;
+        float tw = (r.width - 12) / perRow;
         for(int i = 0; i < names.Length; i++)
         {
             Color old = GUI.backgroundColor;
             if((int)tab == i) GUI.backgroundColor = new Color(1f, 0.82f, 0.35f);
-            if(GUI.Button(new Rect(r.x + 6 + i * tw, r.y + 6, tw - 2, 22), names[i], tabButton))
+            if(GUI.Button(new Rect(r.x + 6 + (i % perRow) * tw, r.y + 6 + (i / perRow) * 24, tw - 2, 22), names[i], tabButton))
             {
                 tab = (Tab)i;
             }
             GUI.backgroundColor = old;
         }
-        GUILayout.BeginArea(new Rect(r.x + 10, r.y + 34, r.width - 20, r.height - 40));
+        GUILayout.BeginArea(new Rect(r.x + 10, r.y + 58, r.width - 20, r.height - 64));
         switch(tab)
         {
             case Tab.Movie: MovieTab(); break;
             case Tab.Ghosts: GhostsTab(); break;
             case Tab.Lines: LinesTab(); break;
+            case Tab.Sections: SectionsTab(); break;
             case Tab.Search: SearchTab(); break;
             case Tab.Video: VideoTab(); break;
             case Tab.Settings: SettingsTab(); break;

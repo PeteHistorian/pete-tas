@@ -190,6 +190,27 @@ public class TasDraw : MonoBehaviour
             Seg(line.B + Vector2.left * 0.15f, line.B + Vector2.right * 0.15f, 3f, line.Color, z);
         }
 
+        // Sections: a start gate (with a flag) and an end gate (with a double bar)
+        if(TasSections.ShowGates)
+        {
+            foreach(TasSection s in TasSections.All)
+            {
+                Gate(s.Start, s.Color, true, z);
+                Gate(s.End, s.Color, false, z);
+            }
+            TasHud hud = TasHud.I;
+            if(hud != null && hud.PendingGate != null)
+            {
+                Gate(hud.PendingGate, new Color(1f, 1f, 1f, 0.8f), true, z);
+            }
+        }
+        // Where Pete is put in a practice run
+        if(m.Movie.TeleportFrame >= 1)
+        {
+            Circle(m.Movie.TeleportTo, 10f * upp, 2.5f, new Color(1f, 0.6f, 0.2f), z);
+            Cross(m.Movie.TeleportTo, 5f, new Color(1f, 0.6f, 0.2f), z);
+        }
+
         // Ghost routes
         foreach(TasGhost g in m.Ghosts)
         {
@@ -333,6 +354,28 @@ public class TasDraw : MonoBehaviour
             Seg(c + new Vector2(h.x, -h.y), c + new Vector2(h.x, h.y), 1.5f, col, z);
             Seg(c + new Vector2(h.x, h.y), c + new Vector2(-h.x, h.y), 1.5f, col, z);
             Seg(c + new Vector2(-h.x, h.y), c + new Vector2(-h.x, -h.y), 1.5f, col, z);
+        }
+    }
+
+    private void Gate(TasLine g, Color c, bool start, float z)
+    {
+        Vector2 a = g.A, b = g.B;
+        Seg(a, b, 5f, c, z);
+        Vector2 across = g.Vertical ? Vector2.right : Vector2.up;
+        float tick = 10f * upp;
+        if(start)
+        {
+            // A little flag at the top (or right) end
+            Vector2 tip = b;
+            Vector2 along = g.Vertical ? Vector2.down : Vector2.left;
+            Seg(tip, tip + across * tick * 1.6f + along * tick * 0.5f, 3f, c, z);
+            Seg(tip + across * tick * 1.6f + along * tick * 0.5f, tip + along * tick, 3f, c, z);
+        }
+        else
+        {
+            Vector2 off = across * tick * 0.6f;
+            Seg(a + off, b + off, 2f, c, z);
+            Seg(a - off, b - off, 2f, c, z);
         }
     }
 
