@@ -74,4 +74,17 @@ public class PlayerHealth : MonoBehaviour
     {
         LevelReset.RESETLEVEL();
     }
+
+    // Online: back to full health after respawning
+    public void NetRestoreHealth()
+    {
+        playerHP = maxPlayerHP;
+        kbCounter = 0;
+        RefreshHealthUi();
+    }
+
+    public int HP
+    {
+        get { return playerHP; }
+    }
 }

@@ -22,6 +22,8 @@ public class EnemyHealth : MonoBehaviour
 
     public void doDamage(int amount, Transform kbOrigin, bool isDown)
     {
+        // Online, on a joining player's game: the hit is sent to the host, who applies it for everyone
+        if(NetHooks.EnemyHit != null && NetHooks.EnemyHit(this, amount, kbOrigin, isDown)) return;
         if (damageable && !hit && currentHealth > 0)
         {
             hit = true;
@@ -93,7 +95,8 @@ public class EnemyHealth : MonoBehaviour
         {
             GetComponent<Rigidbody2D>().bodyType = RigidbodyType2D.Static;
             GetComponent<EnemyAttack>().enabled = false;
-            GetComponent<HealthDrop>().EnemyDrop();
+            // Online, the host decides the health drops
+            if(!NetHooks.IsClient) GetComponent<HealthDrop>().EnemyDrop();
             GetComponents<BoxCollider2D>()[0].enabled = false;
             GetComponents<BoxCollider2D>()[1].enabled = false;
             
@@ -116,5 +119,29 @@ public class EnemyHealth : MonoBehaviour
     public void DisableEnemy()
     {
         gameObject.SetActive(false);
+    }
+
+    // Online: the host says this one was defeated
+    public void NetDie()
+    {
+        if(currentHealth > 0 || gameObject.activeSelf)
+        {
+            Death();
+        }
+    }
+
+    public bool Alive
+    {
+        get { return currentHealth > 0; }
+    }
+
+    public bool IsEnemy
+    {
+        get { return isEnemy; }
+    }
+
+    public bool CanBeHit
+    {
+        get { return damageable && !hit && currentHealth > 0; }
     }
 }

@@ -24,8 +24,17 @@ public static class PeteInput
     // "Pressed this frame" only counts during the frame itself, not while the TAS tool is paused.
     public static bool TasEdgesLive;
 
+    // Used by the online mode's automatic test: buttons pressed by a script instead of the keyboard.
+    public static bool Scripted;
+    public static Buttons ScriptHeld;
+    public static Buttons ScriptPrevious;
+
     public static float GetAxisRaw(string axis)
     {
+        if(Scripted)
+        {
+            return ScriptAxis(axis);
+        }
         if(!TasHooks.Active)
         {
             return Input.GetAxisRaw(axis);
@@ -35,6 +44,10 @@ public static class PeteInput
 
     public static float GetAxis(string axis)
     {
+        if(Scripted)
+        {
+            return ScriptAxis(axis);
+        }
         if(!TasHooks.Active)
         {
             return Input.GetAxis(axis);
@@ -44,6 +57,11 @@ public static class PeteInput
 
     public static bool GetButton(string button)
     {
+        if(Scripted)
+        {
+            Buttons s = ButtonFor(button);
+            return s != Buttons.None && (ScriptHeld & s) != 0;
+        }
         if(!TasHooks.Active)
         {
             return Input.GetButton(button);
@@ -54,6 +72,11 @@ public static class PeteInput
 
     public static bool GetButtonDown(string button)
     {
+        if(Scripted)
+        {
+            Buttons s = ButtonFor(button);
+            return s != Buttons.None && (ScriptHeld & s) != 0 && (ScriptPrevious & s) == 0;
+        }
         if(!TasHooks.Active)
         {
             return Input.GetButtonDown(button);
@@ -70,6 +93,15 @@ public static class PeteInput
         }
         // Keyboard shortcuts like R (reset) are handled by the TAS tool itself.
         return false;
+    }
+
+    private static float ScriptAxis(string axis)
+    {
+        Buttons held = TasHeld;
+        TasHeld = ScriptHeld;
+        float v = TasAxis(axis);
+        TasHeld = held;
+        return v;
     }
 
     private static float TasAxis(string axis)

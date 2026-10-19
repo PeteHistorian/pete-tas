@@ -17,6 +17,7 @@ public class HealthPickup : MonoBehaviour
             AudioManager.Instance.PlaySound("O_HealthPickup");
             // Hidden instead of destroyed so the TAS tool can bring it back when rewinding
             gameObject.SetActive(false);
+            if(NetHooks.PickupTaken != null) NetHooks.PickupTaken(this);
         }
     }
 

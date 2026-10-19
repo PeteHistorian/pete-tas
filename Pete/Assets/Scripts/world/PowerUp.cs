@@ -13,9 +13,35 @@ public class PowerUp : MonoBehaviour
         if(TasHooks.MuteCallbacks) return;
         if(other.CompareTag("Player"))
         {
+            // Online: orbs count for the whole team (the host keeps count)
+            if(NetHooks.OrbTouched != null)
+            {
+                NetHooks.OrbTouched(this);
+                return;
+            }
             Collect(other);
             GetComponent<SpriteRenderer>().enabled = false;
-        }    
+        }
+    }
+
+    // Online: someone in the team collected this orb, so the team has teamPowers orbs now
+    public void NetCollected(int teamPowers)
+    {
+        GetComponent<SpriteRenderer>().enabled = false;
+        foreach(Collider2D c in GetComponents<Collider2D>())
+        {
+            c.enabled = false;
+        }
+        if(teamPowers == 1)
+        {
+            oneMore.SetActive(true);
+            disableTextTimes.Add(TasHooks.GameTime + 5);
+        }
+        else if(teamPowers >= 2)
+        {
+            returnStart.SetActive(true);
+            disableTextTimes.Add(TasHooks.GameTime + 5);
+        }
     }
 
     private void Collect(Collider2D player) 

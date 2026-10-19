@@ -25,6 +25,12 @@ public class LevelReset : MonoBehaviour
             TasHooks.PlayerDied = true;
             return;
         }
+        // Online: only this player starts again (at their last safe spot), not the whole level
+        if(NetHooks.Respawn != null)
+        {
+            NetHooks.Respawn();
+            return;
+        }
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
     

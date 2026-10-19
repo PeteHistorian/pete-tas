@@ -11,7 +11,13 @@ public class HealthDrop : MonoBehaviour
     {
         if(Random.Range(0, chance) == 0)
         {
-            Instantiate(healthPickup, this.transform.position, new Quaternion());
+            GameObject pickup = Instantiate(healthPickup, this.transform.position, new Quaternion());
+            if(NetHooks.PickupSpawned != null) NetHooks.PickupSpawned(pickup, this);
         }
+    }
+
+    public GameObject Prefab
+    {
+        get { return healthPickup; }
     }
 }

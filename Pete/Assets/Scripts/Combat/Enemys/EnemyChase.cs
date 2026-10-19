@@ -18,6 +18,8 @@ public class EnemyChase : MonoBehaviour
     
     void Update()
     {
+        // Online, on a joining player's game: the host moves the enemies
+        if(NetHooks.IsClient) return;
         if(chasing)
         {
             if(groundEnemy)
@@ -37,23 +39,42 @@ public class EnemyChase : MonoBehaviour
 
     private void Chase(bool grounded)
     {
+        Vector3 target = player.transform.position;
+        // Online: chase whichever player is closest
+        if(NetHooks.NearestPlayer != null)
+        {
+            Vector3? nearest = NetHooks.NearestPlayer(transform.position);
+            if(nearest.HasValue) target = nearest.Value;
+        }
         if(!grounded)
         {
-            transform.position = Vector2.MoveTowards(transform.position, player.transform.position, speed * Time.deltaTime);
+            transform.position = Vector2.MoveTowards(transform.position, target, speed * Time.deltaTime);
         }
         else
         {
-            transform.position = Vector2.MoveTowards(transform.position, new Vector2(player.transform.position.x, transform.position.y), speed * Time.deltaTime);
+            transform.position = Vector2.MoveTowards(transform.position, new Vector2(target.x, transform.position.y), speed * Time.deltaTime);
         }
     }
 
-    private void OnTriggerEnter2D(Collider2D other) 
+    // Online: the host starts the chase when another player comes close
+    public void StartChasing()
+    {
+        chasing = true;
+    }
+
+    public bool IsChasing
+    {
+        get { return chasing; }
+    }
+
+    private void OnTriggerEnter2D(Collider2D other)
     {
         if(TasHooks.MuteCallbacks) return;
+        if(NetHooks.IsClient) return;
         if(other.CompareTag("Player"))
         {
             chasing = true;
-        }    
+        }
     }
 
     private void OnCollisionEnter2D(Collision2D other) 

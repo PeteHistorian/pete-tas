@@ -12,6 +12,7 @@ public class roomTransition : MonoBehaviour
         if(other.CompareTag("Player") && !other.isTrigger)
         {
             vCam.SetActive(true);
+            if(NetHooks.RoomEntered != null) NetHooks.RoomEntered(this);
         }
     }
 

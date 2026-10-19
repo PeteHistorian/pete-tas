@@ -41,6 +41,19 @@ public class TimerManager : MonoBehaviour
         }
     }
 
+    // Online: the host's timer counts for the whole team
+    public void NetSetTime(float time, bool on)
+    {
+        currentTime = time;
+        timerOn = on;
+        DisplayTimer(currentTime);
+    }
+
+    public float CurrentTime
+    {
+        get { return currentTime; }
+    }
+
     public void StartTimer() // Starts the Timer on first Movement
     {
         timerOn = true;

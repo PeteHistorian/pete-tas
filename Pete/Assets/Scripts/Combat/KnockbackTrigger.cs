@@ -41,6 +41,8 @@ public class KnockbackTrigger : MonoBehaviour
 
     public void ReverseKnockback(Transform knocker)
     {
+        // Online: another player's down-swing bounces them on their own game, not our Pete
+        if(NetHooks.SuppressPogo) return;
         //kbDir = knocker.transform.position - GameObject.FindGameObjectWithTag("Player").transform.position;
         //GameObject.FindGameObjectWithTag("Player").GetComponent<Rigidbody2D>().velocity = kbDir.normalized * kbVelocity;
         body = GameObject.FindGameObjectWithTag("Player").GetComponent<Rigidbody2D>();

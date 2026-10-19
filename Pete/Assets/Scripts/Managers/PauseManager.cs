@@ -25,7 +25,8 @@ public class PauseManager : MonoBehaviour
     private void Pause()
     {
         pauseOverlay.SetActive(true);
-        Time.timeScale = 0f;
+        // Online the game keeps going for everyone else, so it doesn't stop here either
+        if(!NetHooks.Online) Time.timeScale = 0f;
         isPaused = true;
     }
 

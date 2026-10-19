@@ -15,6 +15,8 @@ public class EnemyWalking : MonoBehaviour
 
     void Update()
     {
+        // Online, on a joining player's game: the host moves the enemies
+        if(NetHooks.IsClient) return;
         MoveEnemy(direction);
     }
 
@@ -25,7 +27,7 @@ public class EnemyWalking : MonoBehaviour
         {
             GetComponent<EnemyAttack>().DamagePlayer(other);
         }
-        else
+        else if(!NetHooks.IsClient)
         {
             direction = direction*(-1);
             flipSprite._FlipSprite(direction);
