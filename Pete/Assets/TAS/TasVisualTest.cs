@@ -249,6 +249,11 @@ public class TasVisualTest : MonoBehaviour
             if(!shotWill && pathNow != null && pathNow.Hits.Exists(h => h >= 12))
             {
                 yield return Shot("prediction-will-hit");
+                // The same, with the text in the level switched off (not saved, so the user's setting stays)
+                bool keepText = TasHud.ShowLevelText;
+                TasHud.ShowLevelText = false;
+                yield return Shot("prediction-no-text");
+                TasHud.ShowLevelText = keepText;
                 enemyInfo += " will-hit warning at frame " + f + ";";
                 shotWill = true;
             }

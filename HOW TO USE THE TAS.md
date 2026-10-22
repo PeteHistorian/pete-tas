@@ -43,6 +43,7 @@ The level starts frozen on **frame 0**. One frame is 1/50th of a second, the sam
 | **M** | free camera: zoom out, look around, click the route to jump to that frame |
 | **X** | show / hide hitboxes |
 | **T** | show / hide prediction lines |
+| **N** | show / hide the text in the level (line names, labels, section gate names) |
 | **C** | center the camera on Pete |
 | **Shift + click** frame numbers | select a range of frames |
 | **Ctrl + Z / Ctrl + Y** | undo / redo (Ctrl + Shift + Z also redoes) |
@@ -131,6 +132,7 @@ Each kind of line has its own tick box in the View tab, so you can show only the
   - The jump lines you've ticked always show. When one goes exactly where the green line goes (for example, "let go of jump" after you've already let go), it's drawn as a thin colored line down the middle of the green one.
 - **Red: if an enemy hits you.** A "what if": one line for each enemy or spike near Pete that could hurt him right now, showing where the knockback would throw him. It doesn't mean it *will* happen. For that, see "will you get hit?" above.
 - **Attacks: what happens if you attack on the next frame.** Orange is forward, pink is up, tan is down (the pogo). They only show up when the swing actually hits something and changes where Pete goes. For example, they show a **fly pull**: Pete's sword hits the fly while the fly hits Pete.
+- **Text in the level (N)** (tick box, or press **N**): hides all the text drawn in the level (line names, labels and section gate names), while the lines stay. It's remembered the next time you start the TAS, and N works even with the panel hidden.
 - **Name at the end of each line** (tick box): every line gets its name in its own color at its end ("your path", "longest jump: hold 27 f", "if the Fly hits you", "attack now"), so you can always tell which is which.
 - **Red X:** a hit on that line. On the green line it means your inputs really do get Pete hit there. On the other lines it means "if you did this instead, you'd get hit here".
 - **Knockback & labels:**
@@ -185,6 +187,26 @@ Everything here is in the **Sections** tab.
 - Sections and their versions are saved in `TAS Files\Sections` (one folder per section). The **- / +** buttons make the gates shorter or longer, and **X** removes a section (its files are kept, renamed).
 
 A good way to use it: make a section for each room, improve one room at a time from a start point, save versions as they get faster, then press Build the run.
+
+## Practice: play one room at a time, for real
+
+The **Practice** tab turns your run into one practice level per room. You play each level yourself at normal speed, with the normal controls, as often as you like.
+
+1. Pick the run to take the rooms from with **◀ / ▶**. Full runs like "glitchless" work best, and they come first.
+2. Press **Find the rooms in this run**. The tool plays the run quickly and makes a level for every room it goes through.
+   - Some rooms come twice, because the run goes out to the orbs and back. The second one is called "(back)".
+   - The list is remembered, so next time it's there straight away.
+3. Press **Play** next to a level.
+   - It starts exactly where your run enters that room: Pete, his speed, HP, the orbs, the enemies and the timer are all as they were.
+   - It waits until you press a button. Then the game runs at normal speed and the timer starts.
+   - You **clear** it by reaching the room your run goes to next. The last level ends at the finish.
+   - **R** starts the room again at any time, and after a clear or a death it starts again by itself.
+   - **Esc** goes back to the list.
+- The bar at the top shows the time, your best, how many tries and clears you've had, and your success rate. It also shows how long your run takes through that room.
+- **Race my best:** your fastest clear plays as a see-through Pete next to you.
+- **Show my buttons:** your button presses show at the bottom of the screen.
+- While you practice, the TAS panel, its keys and its lines are out of the way, and practice tries don't end up in your movie, undo or tries. Your own movie comes back when you leave the Practice tab.
+- Tries, clears, best times and best ghosts are saved in `TAS Files\Practice`.
 
 ## Going back a frame
 

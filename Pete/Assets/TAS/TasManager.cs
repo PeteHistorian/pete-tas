@@ -43,6 +43,8 @@ public class TasManager : MonoBehaviour
     // ---------- Status ----------
     public Mode CurrentMode { get; private set; }
     public bool Recording;
+    // While you practice (TasPractice), the TAS keeps no tries, undo steps or autosave of the practice attempts
+    public bool Quiet;
     public int SpeedPercent = 100;
     public bool ExactRewind;
     public PrimeMode Priming = PrimeMode.PreviousFrame;
@@ -174,6 +176,7 @@ public class TasManager : MonoBehaviour
         root.AddComponent<TasFreeCam>();
         root.AddComponent<TasVideoExport>();
         root.AddComponent<TasPredict>();
+        root.AddComponent<TasPractice>();
         SelfTestMode = HasArg("-tasSelfTest");
 #if UNITY_EDITOR
         SelfTestMode |= UnityEditor.SessionState.GetBool("PeteTAS.SelfTest", false);
@@ -1424,6 +1427,10 @@ public class TasManager : MonoBehaviour
     // Call just before changing the movie
     private void Remember(string what)
     {
+        if(Quiet)
+        {
+            return;
+        }
         UndoStep step = new UndoStep();
         step.Movie = Movie.Clone();
         step.Name = MovieName;
@@ -1627,7 +1634,7 @@ public class TasManager : MonoBehaviour
         {
             frame = 1;
         }
-        if(GreenEnd >= frame && ghostArmed)
+        if(GreenEnd >= frame && ghostArmed && !Quiet)
         {
             MakeGhost(frame);
             ghostArmed = false;
@@ -1880,6 +1887,33 @@ public class TasManager : MonoBehaviour
     }
 
     // Swaps in a different movie and replays it from the start up to "goTo".
+    // Practice: switch to another movie without an undo step or a try, then go to a frame. Savestates of the frames
+    // both movies share are kept, so switching between practice levels (and back to your movie) is quick.
+    public void LoadQuiet(TasMovie movie, string name, int goTo, Action then = null)
+    {
+        if(Busy || CurrentMode == Mode.Video)
+        {
+            return;
+        }
+        if(CurrentMode == Mode.Playing)
+        {
+            SetMode(Mode.Paused);
+        }
+        Recording = false;
+        int diff = FirstDifference(Movie, movie);
+        bool wasQuiet = Quiet;
+        Quiet = true;
+        if(diff >= 1)
+        {
+            InvalidateFrom(diff, false);
+        }
+        Quiet = wasQuiet;
+        Movie = movie;
+        MovieName = name;
+        // If a frame up to where we are now changed, what's on screen is out of date: go there again
+        Seek(Mathf.Clamp(goTo, 0, movie.Length), then, diff >= 1 && diff <= Frame);
+    }
+
     public void ReplaceMovie(TasMovie movie, string name, int goTo)
     {
         if(Busy || CurrentMode == Mode.Video)
@@ -1932,7 +1966,7 @@ public class TasManager : MonoBehaviour
         {
             return;
         }
-        if(SelfTestMode)
+        if(SelfTestMode || Quiet)
         {
             return;
         }

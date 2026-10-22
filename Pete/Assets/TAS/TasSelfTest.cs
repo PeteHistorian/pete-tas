@@ -94,6 +94,13 @@ public class TasSelfTest : MonoBehaviour
             yield return CheckMovie(checkMovie);
             yield break;
         }
+        string practiceRun = ArgAfter("-tasPracticeTest");
+        if(practiceRun != null)
+        {
+            yield return PracticeTest(practiceRun);
+            Finish("practice-test.txt");
+            yield break;
+        }
         Check(M.Player != null && M.Player.Valid, "Level loaded and Pete found");
         Log("Saved objects: " + M.Registry.EntryCount + ", clock offset " + (M.ClockOffsetAfterBoot * 1000).ToString("0.000") + " ms");
         int frames = 1500;
@@ -524,6 +531,133 @@ public class TasSelfTest : MonoBehaviour
             }
         }
         return null;
+    }
+
+    // "-tasPracticeTest <run>": practice mode on one of your saved runs. Finds the run's levels, plays one by feeding
+    // in the run's own buttons (so it must clear in exactly the run's time), then checks the stats, the ghost, retry,
+    // stopping, and that your own movie comes back with no tries added.
+    private IEnumerator PracticeTest(string runName)
+    {
+        TasPractice p = TasPractice.I;
+        TasMovie mine = M.Movie.Clone();
+        string mineName = M.MovieName;
+        int ghosts0 = M.Ghosts.Count;
+        if(runName == "all")
+        {
+            runName = TasPractice.AllRuns;
+        }
+        Log("Practice test on \"" + runName + "\"");
+        p.FindLevels(runName);
+        int wait = 0;
+        while((p.Scanning || !M.IsIdle) && ++wait < 400000)
+        {
+            yield return null;
+        }
+        Log(p.Status);
+        // "-tasPracticeShots" (in a window): pictures of each step, in TAS Files\practice-shots
+        bool shots = TasManager.HasArg("-tasPracticeShots") && !Application.isBatchMode;
+        if(shots && TasHud.I != null)
+        {
+            TasHud.I.ShowTab("Practice");
+            yield return PracticeShot("1 list");
+        }
+        Check(p.Levels.Count >= 2, "Found " + p.Levels.Count + " practice levels");
+        foreach(TasPractice.Level lv in p.Levels)
+        {
+            Log("  " + lv.Number + ". " + lv.Name + " -> " + (lv.NextName ?? "the finish") + ": \"" + lv.RunName + "\" from frame " + lv.StartFrame + ", takes " + lv.RunFrames + " f");
+        }
+        // A level the run enters while pressing something (a level starts on your first button)
+        TasPractice.Level L = null;
+        for(int i = 1; i < p.Levels.Count && L == null; i++)
+        {
+            if(p.Levels[i].NextName != null && p.Levels[i].Run.Get(p.Levels[i].StartFrame + 1) != Buttons.None) L = p.Levels[i];
+        }
+        TasMovie run = L != null ? L.Run : null;
+        Check(L != null, "Picked a level to play: " + (L != null ? L.Number + ". " + L.Name : "none"));
+        if(L == null)
+        {
+            yield break;
+        }
+        p.Play(L);
+        yield return WaitPractice(p, TasPractice.State.Ready);
+        Check(p.Now == TasPractice.State.Ready && M.Frame == L.StartFrame, "The level waits on its start frame (" + M.Frame + ", start " + L.StartFrame + ")");
+        Check(M.Quiet, "The TAS keeps no tries, undo steps or autosave while practicing");
+        if(shots) yield return PracticeShot("2 ready");
+        int tries0 = L.S.Tries, clears0 = L.S.Clears;
+
+        // Feed in the run's own buttons, one frame at a time, like a player would press them
+        int guard = 0;
+        bool midShot = false;
+        while(p.Now == TasPractice.State.Ready || p.Now == TasPractice.State.Playing)
+        {
+            TasManager.FakeHeld = run.Get(M.Frame + 1);
+            if(++guard > L.RunFrames * 4 + 600)
+            {
+                Log("Gave up: the level didn't end");
+                break;
+            }
+            if(shots && !midShot && M.Frame - L.StartFrame >= L.RunFrames / 2)
+            {
+                midShot = true;
+                yield return PracticeShot("3 playing");
+            }
+            yield return null;
+        }
+        TasManager.FakeHeld = null;
+        if(shots) yield return PracticeShot("4 clear");
+        Check(p.Now == TasPractice.State.Result && L.S.Clears == clears0 + 1, "Playing the run's own buttons clears the level");
+        Check(L.S.Best == L.RunFrames, "...in exactly the run's time (" + L.S.Best + " f, the run " + L.RunFrames + " f)");
+        Check(L.S.Tries == tries0 + 1, "...and it counts as one try (" + L.S.Tries + ")");
+        Check(L.S.Ghost != null && L.S.Ghost.Count >= L.RunFrames, "...and it's the ghost to race now (" + (L.S.Ghost != null ? L.S.Ghost.Count : 0) + " frames)");
+
+        p.Retry();
+        yield return WaitPractice(p, TasPractice.State.Ready);
+        Check(p.Now == TasPractice.State.Ready && M.Frame == L.StartFrame && M.Movie.Length == L.StartFrame, "R goes back to the start with nothing of the try kept (frame " + M.Frame + ", movie " + M.Movie.Length + " frames)");
+
+        // Standing still is never a clear; pressing a button that does nothing useful then R also works
+        // (a jump on the spot, so Pete stays near the start while your best runs ahead as the ghost)
+        TasManager.FakeHeld = Buttons.Jump;
+        for(int i = 0; i < 30; i++) yield return null;
+        TasManager.FakeHeld = null;
+        if(shots) yield return PracticeShot("5 racing your best");
+        Check(p.Now == TasPractice.State.Playing && L.S.Tries == tries0 + 2, "A second try starts on a button press (tries " + L.S.Tries + ")");
+        p.Retry();
+        yield return WaitPractice(p, TasPractice.State.Ready);
+        Check(M.Frame == L.StartFrame, "R in the middle of a try goes back to the start");
+
+        p.Stop();
+        Check(!TasPractice.InLevel, "Esc goes back to the list");
+        p.GiveBackYourMovie();
+        yield return WaitIdle();
+        Check(!M.Quiet && M.MovieName == mineName && M.Movie.SameInputs(mine), "Your own movie comes back afterwards (\"" + M.MovieName + "\", " + M.Movie.Length + " frames)");
+        Check(M.Ghosts.Count == ghosts0, "No tries were added while practicing (" + M.Ghosts.Count + ")");
+    }
+
+    private IEnumerator PracticeShot(string name)
+    {
+        string dir = Path.Combine(TasManager.TasFolder, "practice-shots");
+        Directory.CreateDirectory(dir);
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        ScreenCapture.CaptureScreenshot(Path.Combine(dir, name + ".png"));
+        yield return null;
+        yield return null;
+    }
+
+    private IEnumerator WaitPractice(TasPractice p, TasPractice.State want, int timeoutFrames = 200000)
+    {
+        int n = 0;
+        yield return null;
+        while(p.Now != want || !M.IsIdle)
+        {
+            if(++n > timeoutFrames)
+            {
+                Log("Timed out waiting for practice to be " + want + " (it's " + p.Now + ")");
+                failed = true;
+                yield break;
+            }
+            yield return null;
+        }
     }
 
     private void Finish(string file)

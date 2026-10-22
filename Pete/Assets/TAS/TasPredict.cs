@@ -373,7 +373,7 @@ public class TasPredict : MonoBehaviour
     // Should the lines be worked out (and drawn) right now?
     public static bool Active(TasManager m)
     {
-        if(!Show || m == null || m.Player == null || !m.Player.Valid)
+        if(!Show || m == null || m.Player == null || !m.Player.Valid || TasPractice.InLevel)
         {
             return false;
         }

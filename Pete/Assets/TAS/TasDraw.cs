@@ -45,8 +45,9 @@ public class TasDraw : MonoBehaviour
 
     private static bool ModeAllowsDrawing(TasManager m)
     {
-        if(m == null || m.Player == null || !m.Player.Valid)
+        if(m == null || m.Player == null || !m.Player.Valid || TasPractice.InLevel)
         {
+            // (While practicing a room, the level looks like the real game)
             return false;
         }
         switch(m.CurrentMode)

@@ -12,7 +12,7 @@ public class TasHud : MonoBehaviour
     public static TasHud I;
     public bool Hidden;
 
-    private enum Tab { Movie, Ghosts, Lines, Sections, Search, Video, Settings, Help }
+    private enum Tab { Movie, Ghosts, Lines, Sections, Search, Video, Settings, Help, Practice }
     private Tab tab = Tab.Help;
 
     private const float RefHeight = 900f;
@@ -113,6 +113,20 @@ public class TasHud : MonoBehaviour
     private void Awake()
     {
         I = this;
+        ShowLevelText = PlayerPrefs.GetInt(LevelTextKey, 1) == 1;
+    }
+
+    // All the text drawn in the level: line names, line labels and section gate names (the lines stay).
+    // N switches it, and it's remembered the next time the TAS starts.
+    public static bool ShowLevelText = true;
+    private const string LevelTextKey = "TAS.ShowLevelText";
+
+    public void ToggleLevelText()
+    {
+        ShowLevelText = !ShowLevelText;
+        PlayerPrefs.SetInt(LevelTextKey, ShowLevelText ? 1 : 0);
+        PlayerPrefs.Save();
+        M.Say(ShowLevelText ? "Text in the level ON: line names, labels and gate names." : "Text in the level OFF (the lines are still there). Press N to show it again.");
     }
 
     // Used by the screenshot test
@@ -205,6 +219,16 @@ public class TasHud : MonoBehaviour
             return;
         }
         TrackBusy();
+        if(TasPractice.InLevel)
+        {
+            // Practicing a room: only R and Esc (handled by TasPractice) do anything
+            return;
+        }
+        if(tab != Tab.Practice && TasPractice.I != null && TasPractice.I.HoldsYourMovie && !M.Busy)
+        {
+            // Left the Practice tab: your own movie comes back
+            TasPractice.I.GiveBackYourMovie();
+        }
         if(GUIUtility.keyboardControl != 0)
         {
             // Typing in a text box
@@ -243,6 +267,7 @@ public class TasHud : MonoBehaviour
         if(Input.GetKeyDown(KeyCode.M) && TasFreeCam.I != null) TasFreeCam.I.Toggle();
         if(Input.GetKeyDown(KeyCode.X)) ToggleHitboxes();
         if(Input.GetKeyDown(KeyCode.T)) TogglePredictions();
+        if(Input.GetKeyDown(KeyCode.N)) ToggleLevelText();
         if(Input.GetKeyDown(KeyCode.C) && !ctrlHeld && TasFreeCam.I != null) TasFreeCam.I.ToggleCenter();
         if(M.Busy)
         {
@@ -542,7 +567,7 @@ public class TasHud : MonoBehaviour
     private void DrawPredictionLabels()
     {
         TasPredict pr = TasPredict.I;
-        if(pr == null || (!TasPredict.ShowKnockback && !TasPredict.ShowNames) || !TasPredict.Active(M) || M.Busy || Event.current.type != EventType.Repaint)
+        if(pr == null || !ShowLevelText || (!TasPredict.ShowKnockback && !TasPredict.ShowNames) || !TasPredict.Active(M) || M.Busy || Event.current.type != EventType.Repaint)
         {
             return;
         }
@@ -623,7 +648,7 @@ public class TasHud : MonoBehaviour
     // The name of each section next to its gates
     private void DrawGateLabels()
     {
-        if(!TasSections.ShowGates || Event.current.type != EventType.Repaint)
+        if(!ShowLevelText || !TasSections.ShowGates || Event.current.type != EventType.Repaint)
         {
             return;
         }
@@ -1021,6 +1046,11 @@ public class TasHud : MonoBehaviour
             {
                 DrawBusy();
             }
+            return;
+        }
+        if(TasPractice.InLevel)
+        {
+            // Practicing a room: TasPractice draws its own bar
             return;
         }
         if(Hidden)
@@ -1766,8 +1796,8 @@ public class TasHud : MonoBehaviour
     private void DrawTabs(Rect r)
     {
         Area(r);
-        string[] names = { "Movie", "View", "Lines", "Sections", "Search", "Video", "Setup", "Help" };
-        const int perRow = 4;
+        string[] names = { "Movie", "View", "Lines", "Sections", "Search", "Video", "Setup", "Help", "Practice" };
+        const int perRow = 5;
         float tw = (r.width - 12) / perRow;
         for(int i = 0; i < names.Length; i++)
         {
@@ -1790,8 +1820,99 @@ public class TasHud : MonoBehaviour
             case Tab.Video: VideoTab(); break;
             case Tab.Settings: SettingsTab(); break;
             case Tab.Help: HelpTab(); break;
+            case Tab.Practice: PracticeTab(); break;
         }
         GUILayout.EndArea();
+    }
+
+    // ---------- Practice tab: play one room at a time, for real (TasPractice) ----------
+    private Vector2 practiceScroll;
+    private int practiceRunIndex = -1;
+    private List<string> practiceRuns;
+    private float practiceRunsAt;
+
+    private void PracticeTab()
+    {
+        TasPractice p = TasPractice.I;
+        if(p == null)
+        {
+            return;
+        }
+        Action later = null;
+        p.LoadSavedLevels();
+        if(practiceRuns == null || Time.unscaledTime > practiceRunsAt)
+        {
+            practiceRuns = TasPractice.RunChoices();
+            practiceRuns.Insert(0, TasPractice.AllRuns);
+            practiceRunsAt = Time.unscaledTime + 3f;
+        }
+        if(practiceRunIndex < 0 || practiceRunIndex >= practiceRuns.Count)
+        {
+            practiceRunIndex = Mathf.Max(0, practiceRuns.IndexOf(p.RunName));
+        }
+        practiceScroll = GUILayout.BeginScrollView(practiceScroll);
+        GUILayout.Label("PRACTICE (play one room at a time, for real)", header);
+        GUILayout.Label("Each level starts where your run enters a room. Press any button to go, reach the next room to clear it. R tries again, Esc comes back here.", small);
+        GUILayout.Space(4);
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Rooms from", small, GUILayout.Width(70));
+        if(practiceRuns.Count > 1)
+        {
+            if(GUILayout.Button(new GUIContent("◀", "Another run"), button, GUILayout.Width(24))) practiceRunIndex = (practiceRunIndex + practiceRuns.Count - 1) % practiceRuns.Count;
+            GUILayout.Label("<b>" + practiceRuns[practiceRunIndex] + "</b>", small);
+            GUILayout.FlexibleSpace();
+            if(GUILayout.Button(new GUIContent("▶", "Another run"), button, GUILayout.Width(24))) practiceRunIndex = (practiceRunIndex + 1) % practiceRuns.Count;
+        }
+        else
+        {
+            GUILayout.Label("No saved runs yet. Save one in the Movie tab.", small);
+        }
+        GUILayout.EndHorizontal();
+        string chosen = practiceRuns.Count > 1 ? practiceRuns[practiceRunIndex] : null;
+        if(chosen != null && !p.Scanning)
+        {
+            bool all = chosen == TasPractice.AllRuns;
+            string what = all ? "Find the rooms in all my runs" : "Find the rooms in this run";
+            if(GUILayout.Button(new GUIContent(what, all ? "Plays every saved run quickly and makes a level for each room crossing" : "Plays the run quickly to see which rooms it goes through"), button, GUILayout.Height(28)))
+            {
+                string c = chosen;
+                later = () => p.FindLevels(c);
+            }
+        }
+        if(p.Status.Length > 0)
+        {
+            GUILayout.Label(p.Status, small);
+        }
+        GUILayout.Space(4);
+        foreach(TasPractice.Level L in p.Levels)
+        {
+            TasPractice.Level lv = L;
+            TasPractice.Stats s = L.S;
+            string how = s.Tries == 0 ? "not tried yet" : s.Clears + " of " + s.Tries + " (" + TasPractice.Rate(s) + ")" + (s.Best >= 0 ? ", best " + TasPractice.Secs(s.Best) : "");
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("<b>" + L.Number + ". " + L.Name + "</b> <color=#888888>to " + (L.NextName ?? "the finish") + "</color>\n<color=#888888>" + how + ". \"" + L.RunName + "\" " + TasPractice.Secs(L.RunFrames) + "</color>", small);
+            GUILayout.FlexibleSpace();
+            if(!p.Scanning && GUILayout.Button(new GUIContent("Play", "Practice this room: it starts where \"" + L.RunName + "\" enters it"), button, GUILayout.Width(52), GUILayout.Height(30))) later = () => p.Play(lv);
+            GUILayout.EndHorizontal();
+        }
+        GUILayout.Space(6);
+        bool g = GUILayout.Toggle(TasPractice.RaceGhost, " Race my best (a see-through Pete)", toggle);
+        bool i = GUILayout.Toggle(TasPractice.ShowInputs, " Show my buttons", toggle);
+        if(g != TasPractice.RaceGhost || i != TasPractice.ShowInputs)
+        {
+            TasPractice.RaceGhost = g;
+            TasPractice.ShowInputs = i;
+            TasPractice.SaveSettings();
+        }
+        if(p.HoldsYourMovie && GUILayout.Button(new GUIContent("Back to my movie", "Your own movie also comes back by itself when you leave this tab"), button))
+        {
+            later = () => p.GiveBackYourMovie();
+        }
+        GUILayout.EndScrollView();
+        if(later != null)
+        {
+            later();
+        }
     }
 
     private void MovieTab()
@@ -1948,6 +2069,8 @@ public class TasHud : MonoBehaviour
     {
         TasManager m = M;
         PredictionControls();
+        bool levelText = GUILayout.Toggle(ShowLevelText, new GUIContent(" Text in the level (N)", "Line names, labels and section gate names. Untick to hide all of it; the lines stay."), toggle);
+        if(levelText != ShowLevelText) ToggleLevelText();
         GUILayout.Space(4);
         GUILayout.Label("TRIES: each time you change an earlier input, your old route is kept here (and shown in the level as a faded line). \"Go back\" makes one your route again.", small);
         GUILayout.BeginHorizontal();
@@ -2322,6 +2445,11 @@ public class TasHud : MonoBehaviour
         HelpRow("W S / Up Down", "aim attacks (or the left stick)");
         HelpRow("Space", "jump, hold = higher (or A / Cross)");
         HelpRow("O / left click", "attack (or X / Square)");
+        GUILayout.Space(6);
+        GUILayout.Label("PRACTICING A ROOM (Practice tab)", header);
+        HelpRow("Any button", "start the room (the timer starts too)");
+        HelpRow("R", "start the room again");
+        HelpRow("Esc", "back to the list of rooms");
         GUILayout.Space(6);
         GUILayout.Label("Click squares in the INPUTS grid on the right to turn buttons on or off. Drag down a column to paint many frames. Click a frame number to jump to it.", small);
     }
